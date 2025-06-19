@@ -1,0 +1,59 @@
+{
+  "users": [
+    {
+      "id": 794139414,
+      "username": "Leokort",
+      "first_name": "Leonard",
+      "last_name": null,
+      "first_seen": "2025-06-16T22:09:13.184Z",
+      "last_activity": "2025-06-17T02:48:43.736Z",
+      "is_blocked": false,
+      "message_count": 50,
+      "payment_status": "paid"
+    },
+    {
+      "id": 803663661,
+      "username": "pna_mp",
+      "first_name": "Nikita",
+      "last_name": null,
+      "first_seen": "2025-06-16T22:12:23.032Z",
+      "last_activity": "2025-06-16T22:13:03.169Z",
+      "is_blocked": false,
+      "message_count": 20,
+      "payment_status": "unpaid"
+    },
+    {
+      "id": 7103172031,
+      "username": "johnyestet",
+      "first_name": "Джони",
+      "last_name": null,
+      "first_seen": "2025-06-16T22:52:02.016Z",
+      "last_activity": "2025-06-17T16:33:19.339Z",
+      "is_blocked": false,
+      "message_count": 11,
+      "payment_status": "unpaid"
+    },
+    {
+      "id": 839244036,
+      "username": "Nonstoper0",
+      "first_name": "NonsToper",
+      "last_name": null,
+      "first_seen": "2025-06-16T23:34:21.402Z",
+      "last_activity": "2025-06-16T23:34:21.402Z",
+      "is_blocked": false,
+      "message_count": 1,
+      "payment_status": "unpaid"
+    },
+    {
+      "id": 357999362,
+      "username": "colibribro",
+      "first_name": "Михаил",
+      "last_name": null,
+      "first_seen": "2025-06-17T16:12:14.769Z",
+      "last_activity": "2025-06-17T16:13:10.031Z",
+      "is_blocked": false,
+      "message_count": 13,
+      "payment_status": "unpaid"
+    }
+  ]
+}

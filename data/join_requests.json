@@ -1,0 +1,95 @@
+{
+  "requests": [
+    {
+      "id": 1750115639561.7761,
+      "chatId": -1002876590285,
+      "chatTitle": "Первый Панч",
+      "userId": 7103172031,
+      "username": "johnyestet",
+      "first_name": "Джони",
+      "last_name": null,
+      "date": "2025-06-16T23:14:03.000Z",
+      "status": "declined",
+      "timestamp": "2025-06-16T23:13:59.561Z",
+      "processed_at": "2025-06-16T23:14:04.605Z"
+    },
+    {
+      "id": 1750115649350.8071,
+      "chatId": -1002876590285,
+      "chatTitle": "Первый Панч",
+      "userId": 7103172031,
+      "username": "johnyestet",
+      "first_name": "Джони",
+      "last_name": null,
+      "date": "2025-06-16T23:14:13.000Z",
+      "status": "approved",
+      "timestamp": "2025-06-16T23:14:09.350Z",
+      "processed_at": "2025-06-16T23:14:14.306Z"
+    },
+    {
+      "id": 1750116861401.1145,
+      "chatId": -1002876590285,
+      "chatTitle": "Первый Панч",
+      "userId": 839244036,
+      "username": "Nonstoper0",
+      "first_name": "NonsToper",
+      "last_name": null,
+      "date": "2025-06-16T23:34:25.000Z",
+      "status": "approved",
+      "timestamp": "2025-06-16T23:34:21.401Z",
+      "processed_at": "2025-06-16T23:39:32.114Z"
+    },
+    {
+      "id": 1750120220719.7065,
+      "chatId": -1002876590285,
+      "chatTitle": "Первый Панч",
+      "userId": 7103172031,
+      "username": "johnyestet",
+      "first_name": "Джони",
+      "last_name": null,
+      "date": "2025-06-17T00:30:24.000Z",
+      "status": "approved",
+      "timestamp": "2025-06-17T00:30:20.719Z",
+      "processed_at": "2025-06-17T00:30:20.849Z"
+    },
+    {
+      "id": 1750120238913.4985,
+      "chatId": -1002876590285,
+      "chatTitle": "Первый Панч",
+      "userId": 7103172031,
+      "username": "johnyestet",
+      "first_name": "Джони",
+      "last_name": null,
+      "date": "2025-06-17T00:30:42.000Z",
+      "status": "approved",
+      "timestamp": "2025-06-17T00:30:38.913Z",
+      "processed_at": "2025-06-17T00:30:39.038Z"
+    },
+    {
+      "id": 1750176764847.9722,
+      "chatId": -1002876590285,
+      "chatTitle": "Первый Панч",
+      "userId": 357999362,
+      "username": "colibribro",
+      "first_name": "Михаил",
+      "last_name": null,
+      "date": "2025-06-17T16:12:43.000Z",
+      "status": "approved",
+      "timestamp": "2025-06-17T16:12:44.847Z",
+      "processed_at": "2025-06-17T16:13:22.345Z"
+    },
+    {
+      "id": 1750177999339.9902,
+      "chatId": -1002876590285,
+      "chatTitle": "Первый Панч",
+      "userId": 7103172031,
+      "username": "johnyestet",
+      "first_name": "Джони",
+      "last_name": null,
+      "date": "2025-06-17T16:33:19.000Z",
+      "status": "approved",
+      "timestamp": "2025-06-17T16:33:19.339Z",
+      "processed_at": "2025-06-17T16:33:35.562Z"
+    }
+  ]
+}
