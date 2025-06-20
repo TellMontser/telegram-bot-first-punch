@@ -14,7 +14,7 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// Инициализируем файл платежей если его нет
+// Инициализируем файл с платежами если его нет
 if (!fs.existsSync(PAYMENTS_FILE)) {
   fs.writeFileSync(PAYMENTS_FILE, JSON.stringify({ payments: [] }, null, 2));
 }
@@ -25,7 +25,7 @@ export function loadPayments() {
     const data = fs.readFileSync(PAYMENTS_FILE, 'utf8');
     return JSON.parse(data);
   } catch (error) {
-    console.error('Ошибка при загрузке платежей:', error);
+    console.error('❌ Ошибка при загрузке платежей:', error);
     return { payments: [] };
   }
 }
@@ -33,158 +33,125 @@ export function loadPayments() {
 export function savePayments(paymentsData) {
   try {
     fs.writeFileSync(PAYMENTS_FILE, JSON.stringify(paymentsData, null, 2));
+    console.log('✅ Платежи сохранены');
   } catch (error) {
-    console.error('Ошибка при сохранении платежей:', error);
+    console.error('❌ Ошибка при сохранении платежей:', error);
   }
 }
 
-// Создание платежа для подписки
-export async function createSubscriptionPayment(userId, userInfo) {
+export function addPayment(userId, paymentId, amount, status = 'pending') {
   try {
-    console.log(`💳 Создание платежа для пользователя ${userId}`);
-    
-    const amount = 10; // 10 рублей
-    const description = `Подписка на канал "Первый Панч" на 30 дней`;
-    const metadata = {
-      userId: userId.toString(),
-      username: userInfo.username || '',
-      first_name: userInfo.first_name || '',
-      subscription_days: '30'
-    };
-
-    // Создаем платеж в ЮKassa
-    const yukassaPayment = await createYukassaPayment(amount, description, metadata);
-    
-    // Сохраняем платеж в нашей базе
     const paymentsData = loadPayments();
     
     const payment = {
       id: Date.now() + Math.random(),
       userId: userId,
-      paymentId: yukassaPayment.paymentId,
+      paymentId: paymentId,
       amount: amount,
-      status: 'pending',
-      description: description,
-      confirmationUrl: yukassaPayment.confirmationUrl,
+      status: status,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      metadata: metadata
+      updatedAt: new Date().toISOString()
     };
     
     paymentsData.payments.push(payment);
     savePayments(paymentsData);
     
-    console.log('✅ Платеж сохранен в базе:', payment.id);
-    
+    console.log(`✅ Платеж добавлен: ${paymentId} для пользователя ${userId}`);
     return payment;
   } catch (error) {
-    console.error('❌ Ошибка создания платежа:', error);
+    console.error('❌ Ошибка при добавлении платежа:', error);
     throw error;
   }
 }
 
-// Обновление статуса платежа
 export function updatePaymentStatus(paymentId, status) {
   try {
-    console.log(`🔄 Обновление статуса платежа ${paymentId} на ${status}`);
-    
     const paymentsData = loadPayments();
     const paymentIndex = paymentsData.payments.findIndex(p => p.paymentId === paymentId);
     
     if (paymentIndex !== -1) {
       paymentsData.payments[paymentIndex].status = status;
       paymentsData.payments[paymentIndex].updatedAt = new Date().toISOString();
-      
-      if (status === 'succeeded') {
-        paymentsData.payments[paymentIndex].paidAt = new Date().toISOString();
-      } else if (status === 'cancelled') {
-        paymentsData.payments[paymentIndex].cancelledAt = new Date().toISOString();
-      }
-      
       savePayments(paymentsData);
-      console.log('✅ Статус платежа обновлен');
+      
+      console.log(`✅ Статус платежа ${paymentId} обновлен на ${status}`);
       return paymentsData.payments[paymentIndex];
     } else {
-      console.warn('⚠️ Платеж не найден:', paymentId);
+      console.log(`⚠️ Платеж ${paymentId} не найден для обновления статуса`);
       return null;
     }
   } catch (error) {
-    console.error('❌ Ошибка обновления статуса платежа:', error);
-    return null;
+    console.error('❌ Ошибка при обновлении статуса платежа:', error);
+    throw error;
   }
 }
 
-// Получение платежа по ID ЮKassa
 export function getPaymentByPaymentId(paymentId) {
   try {
     const paymentsData = loadPayments();
-    return paymentsData.payments.find(p => p.paymentId === paymentId);
+    const payment = paymentsData.payments.find(p => p.paymentId === paymentId);
+    
+    if (payment) {
+      console.log(`✅ Платеж найден: ${paymentId}`);
+    } else {
+      console.log(`⚠️ Платеж не найден: ${paymentId}`);
+    }
+    
+    return payment || null;
   } catch (error) {
-    console.error('❌ Ошибка поиска платежа:', error);
+    console.error('❌ Ошибка при поиске платежа:', error);
     return null;
   }
 }
 
-// Получение всех платежей пользователя
-export function getUserPayments(userId) {
+export async function createSubscriptionPayment(userId, user) {
   try {
-    const paymentsData = loadPayments();
-    return paymentsData.payments.filter(p => p.userId === userId);
-  } catch (error) {
-    console.error('❌ Ошибка получения платежей пользователя:', error);
-    return [];
-  }
-}
-
-// Получение успешных платежей
-export function getSuccessfulPayments() {
-  try {
-    const paymentsData = loadPayments();
-    return paymentsData.payments.filter(p => p.status === 'succeeded');
-  } catch (error) {
-    console.error('❌ Ошибка получения успешных платежей:', error);
-    return [];
-  }
-}
-
-// Получение общей суммы доходов
-export function getTotalRevenue() {
-  try {
-    const successfulPayments = getSuccessfulPayments();
-    return successfulPayments.reduce((total, payment) => total + payment.amount, 0);
-  } catch (error) {
-    console.error('❌ Ошибка подсчета доходов:', error);
-    return 0;
-  }
-}
-
-// Получение статистики платежей
-export function getPaymentsStats() {
-  try {
-    const paymentsData = loadPayments();
-    const payments = paymentsData.payments;
+    console.log(`💳 Создание платежа подписки для пользователя ${userId}`);
     
-    const total = payments.length;
-    const pending = payments.filter(p => p.status === 'pending').length;
-    const succeeded = payments.filter(p => p.status === 'succeeded').length;
-    const cancelled = payments.filter(p => p.status === 'cancelled').length;
-    const revenue = getTotalRevenue();
+    if (!userId) {
+      throw new Error('Не указан ID пользователя');
+    }
+    
+    if (!user) {
+      throw new Error('Не переданы данные пользователя');
+    }
+    
+    const amount = 10; // 10 рублей
+    const description = `Подписка на канал "Первый Панч" на 30 дней`;
+    
+    const metadata = {
+      userId: userId.toString(),
+      username: user.username || '',
+      first_name: user.first_name || '',
+      type: 'subscription'
+    };
+    
+    console.log('🔄 Отправка запроса в ЮKassa...');
+    
+    // Создаем платеж в ЮKassa
+    const yukassaPayment = await createYukassaPayment(amount, description, metadata);
+    
+    console.log('✅ Платеж создан в ЮKassa:', yukassaPayment);
+    
+    // Сохраняем платеж в локальной базе
+    const localPayment = addPayment(
+      userId, 
+      yukassaPayment.paymentId, 
+      yukassaPayment.amount, 
+      yukassaPayment.status
+    );
+    
+    console.log('✅ Платеж сохранен локально:', localPayment);
     
     return {
-      total,
-      pending,
-      succeeded,
-      cancelled,
-      revenue
+      paymentId: yukassaPayment.paymentId,
+      confirmationUrl: yukassaPayment.confirmationUrl,
+      amount: yukassaPayment.amount,
+      status: yukassaPayment.status
     };
   } catch (error) {
-    console.error('❌ Ошибка получения статистики платежей:', error);
-    return {
-      total: 0,
-      pending: 0,
-      succeeded: 0,
-      cancelled: 0,
-      revenue: 0
-    };
+    console.error('❌ Ошибка при создании платежа подписки:', error.message);
+    console.error('❌ Полная ошибка:', error);
+    throw new Error(`Не удалось создать платеж: ${error.message}`);
   }
 }
