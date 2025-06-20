@@ -3,8 +3,6 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import TelegramBot from 'node-telegram-bot-api';
-import crypto from 'crypto';
-import fetch from 'node-fetch';
 import { fileURLToPath } from 'url';
 
 // Получаем __dirname для ES modules
@@ -15,40 +13,32 @@ const app = express();
 // Render автоматически назначает порт
 const PORT = process.env.PORT || 10000;
 
-// Константы для ЮKassa
-const YUKASSA_SHOP_ID = '1103466';
-const YUKASSA_SECRET_KEY = 'live_WljytTzIIcSMRniFfGBdcSpbMw3ajbhomTEAXduTCxo';
-const YUKASSA_API_URL = 'https://api.yookassa.ru/v3';
-
 const DATA_FILE = path.join(__dirname, 'data', 'users.json');
 const MESSAGES_FILE = path.join(__dirname, 'data', 'messages.json');
 const JOIN_REQUESTS_FILE = path.join(__dirname, 'data', 'join_requests.json');
 const SUBSCRIPTIONS_FILE = path.join(__dirname, 'data', 'subscriptions.json');
-const PAYMENTS_FILE = path.join(__dirname, 'data', 'payments.json');
 const BOT_TOKEN = '7604320716:AAFK-L72uch_OF2gliQacoPVz4RjlqvZXlc';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 // МАКСИМАЛЬНО ОТКРЫТЫЕ CORS настройки для админки
 app.use(cors({
-  origin: '*', // Разрешаем ВСЕ домены
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH'],
-  allowedHeaders: '*', // Разрешаем ВСЕ заголовки
+  allowedHeaders: '*',
   credentials: false,
   optionsSuccessStatus: 200
 }));
 
-// Дополнительные CORS заголовки для гарантии
+// Дополнительные CORS заголовки
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', '*');
   res.header('Access-Control-Allow-Headers', '*');
   res.header('Access-Control-Max-Age', '86400');
   
-  // Логируем все запросы
   console.log(`📨 ${req.method} ${req.url} from ${req.get('Origin') || 'unknown'}`);
   
-  // Отвечаем на preflight запросы
   if (req.method === 'OPTIONS') {
     console.log('✅ Preflight request handled');
     return res.status(200).end();
@@ -59,7 +49,6 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.raw({ type: 'application/json', limit: '10mb' }));
 
 // Создаем директорию для данных если её нет
 const dataDir = path.dirname(DATA_FILE);
@@ -84,11 +73,9 @@ if (!fs.existsSync(SUBSCRIPTIONS_FILE)) {
   fs.writeFileSync(SUBSCRIPTIONS_FILE, JSON.stringify({ subscriptions: [] }, null, 2));
 }
 
-if (!fs.existsSync(PAYMENTS_FILE)) {
-  fs.writeFileSync(PAYMENTS_FILE, JSON.stringify({ payments: [] }, null, 2));
-}
+// ==================== ФУНКЦИИ ДЛЯ РАБОТЫ С ДАННЫМИ ====================
 
-// Функции для работы с данными
+// Функции для работы с пользователями
 function loadUsers() {
   try {
     const data = fs.readFileSync(DATA_FILE, 'utf8');
@@ -107,6 +94,7 @@ function saveUsers(usersData) {
   }
 }
 
+// Функции для работы с сообщениями
 function loadMessages() {
   try {
     const data = fs.readFileSync(MESSAGES_FILE, 'utf8');
@@ -125,6 +113,7 @@ function saveMessages(messagesData) {
   }
 }
 
+// Функции для работы с запросами на вступление
 function loadJoinRequests() {
   try {
     const data = fs.readFileSync(JOIN_REQUESTS_FILE, 'utf8');
@@ -143,6 +132,7 @@ function saveJoinRequests(requestsData) {
   }
 }
 
+// Функции для работы с подписками
 function loadSubscriptions() {
   try {
     const data = fs.readFileSync(SUBSCRIPTIONS_FILE, 'utf8');
@@ -158,24 +148,6 @@ function saveSubscriptions(subscriptionsData) {
     fs.writeFileSync(SUBSCRIPTIONS_FILE, JSON.stringify(subscriptionsData, null, 2));
   } catch (error) {
     console.error('Ошибка при сохранении подписок:', error);
-  }
-}
-
-function loadPayments() {
-  try {
-    const data = fs.readFileSync(PAYMENTS_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    console.error('Ошибка при загрузке платежей:', error);
-    return { payments: [] };
-  }
-}
-
-function savePayments(paymentsData) {
-  try {
-    fs.writeFileSync(PAYMENTS_FILE, JSON.stringify(paymentsData, null, 2));
-  } catch (error) {
-    console.error('Ошибка при сохранении платежей:', error);
   }
 }
 
@@ -208,15 +180,15 @@ function addOrUpdateUser(userInfo) {
       last_activity: new Date().toISOString(),
       is_blocked: false,
       message_count: 1,
-      payment_status: 'unpaid'
+      subscription_status: 'inactive'
     };
     usersData.users.push(newUser);
   } else {
     usersData.users[existingUserIndex].last_activity = new Date().toISOString();
     usersData.users[existingUserIndex].message_count += 1;
     usersData.users[existingUserIndex].is_blocked = false;
-    if (!usersData.users[existingUserIndex].payment_status) {
-      usersData.users[existingUserIndex].payment_status = 'unpaid';
+    if (!usersData.users[existingUserIndex].subscription_status) {
+      usersData.users[existingUserIndex].subscription_status = 'inactive';
     }
   }
   
@@ -233,25 +205,13 @@ function markUserAsBlocked(userId) {
   }
 }
 
-function updateUserPaymentStatus(userId, status) {
-  const usersData = loadUsers();
-  const userIndex = usersData.users.findIndex(u => u.id === userId);
-  
-  if (userIndex !== -1) {
-    usersData.users[userIndex].payment_status = status;
-    saveUsers(usersData);
-  }
-}
-
-// Функции для подписок
-function addSubscription(userId, paymentId, amount, duration = 30) {
+// Функции для подписок (без платежей)
+function addSubscription(userId, duration = 30) {
   const subscriptionsData = loadSubscriptions();
   
   const subscription = {
     id: Date.now() + Math.random(),
     userId: userId,
-    paymentId: paymentId,
-    amount: amount,
     duration: duration,
     startDate: new Date().toISOString(),
     endDate: new Date(Date.now() + duration * 24 * 60 * 60 * 1000).toISOString(),
@@ -261,6 +221,14 @@ function addSubscription(userId, paymentId, amount, duration = 30) {
   
   subscriptionsData.subscriptions.push(subscription);
   saveSubscriptions(subscriptionsData);
+  
+  // Обновляем статус пользователя
+  const usersData = loadUsers();
+  const userIndex = usersData.users.findIndex(u => u.id === userId);
+  if (userIndex !== -1) {
+    usersData.users[userIndex].subscription_status = 'active';
+    saveUsers(usersData);
+  }
   
   return subscription;
 }
@@ -287,6 +255,15 @@ function isSubscriptionActive(userId) {
       }
     });
     saveSubscriptions(subscriptionsData);
+    
+    // Обновляем статус пользователя
+    const usersData = loadUsers();
+    const userIndex = usersData.users.findIndex(u => u.id === userId);
+    if (userIndex !== -1) {
+      usersData.users[userIndex].subscription_status = 'inactive';
+      saveUsers(usersData);
+    }
+    
     return false;
   }
   
@@ -319,125 +296,19 @@ function deactivateSubscription(userId) {
     subscriptionsData.subscriptions[subscriptionIndex].status = 'cancelled';
     subscriptionsData.subscriptions[subscriptionIndex].cancelledAt = new Date().toISOString();
     saveSubscriptions(subscriptionsData);
+    
+    // Обновляем статус пользователя
+    const usersData = loadUsers();
+    const userIndex = usersData.users.findIndex(u => u.id === userId);
+    if (userIndex !== -1) {
+      usersData.users[userIndex].subscription_status = 'inactive';
+      saveUsers(usersData);
+    }
+    
     return true;
   }
   
   return false;
-}
-
-// Функции для платежей
-function addPayment(userId, paymentId, amount, status = 'pending') {
-  const paymentsData = loadPayments();
-  
-  const payment = {
-    id: Date.now() + Math.random(),
-    userId: userId,
-    paymentId: paymentId,
-    amount: amount,
-    status: status,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-  
-  paymentsData.payments.push(payment);
-  savePayments(paymentsData);
-  
-  return payment;
-}
-
-function updatePaymentStatus(paymentId, status) {
-  const paymentsData = loadPayments();
-  const paymentIndex = paymentsData.payments.findIndex(p => p.paymentId === paymentId);
-  
-  if (paymentIndex !== -1) {
-    paymentsData.payments[paymentIndex].status = status;
-    paymentsData.payments[paymentIndex].updatedAt = new Date().toISOString();
-    savePayments(paymentsData);
-    return paymentsData.payments[paymentIndex];
-  }
-  
-  return null;
-}
-
-function getAllPayments() {
-  const paymentsData = loadPayments();
-  return paymentsData.payments.sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
-}
-
-// Функции для ЮKassa
-async function createPayment(amount, description, userId, returnUrl = null) {
-  const idempotenceKey = crypto.randomUUID();
-  
-  const paymentData = {
-    amount: {
-      value: amount.toFixed(2),
-      currency: 'RUB'
-    },
-    confirmation: {
-      type: 'redirect',
-      return_url: returnUrl || 'https://resonant-pithivier-ac150a.netlify.app/'
-    },
-    capture: true,
-    description: description,
-    metadata: {
-      user_id: userId.toString()
-    }
-  };
-
-  try {
-    const response = await fetch(`${YUKASSA_API_URL}/payments`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotence-Key': idempotenceKey,
-        'Authorization': `Basic ${Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64')}`
-      },
-      body: JSON.stringify(paymentData)
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`ЮKassa API error: ${errorData.description || response.statusText}`);
-    }
-
-    const payment = await response.json();
-    return payment;
-  } catch (error) {
-    console.error('Ошибка создания платежа:', error);
-    throw error;
-  }
-}
-
-async function getPaymentStatus(paymentId) {
-  try {
-    const response = await fetch(`${YUKASSA_API_URL}/payments/${paymentId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Basic ${Buffer.from(`${YUKASSA_SHOP_ID}:${YUKASSA_SECRET_KEY}`).toString('base64')}`
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`ЮKassa API error: ${response.statusText}`);
-    }
-
-    const payment = await response.json();
-    return payment;
-  } catch (error) {
-    console.error('Ошибка получения статуса платежа:', error);
-    throw error;
-  }
-}
-
-function verifyWebhookSignature(body, signature) {
-  const hash = crypto
-    .createHmac('sha256', YUKASSA_SECRET_KEY)
-    .update(body)
-    .digest('hex');
-  
-  return hash === signature;
 }
 
 // Функции для работы с заявками
@@ -491,7 +362,9 @@ function declineJoinRequest(chatId, userId) {
   });
 }
 
-// ГЛАВНЫЙ Health check endpoint - ДОЛЖЕН БЫТЬ ПЕРВЫМ!
+// ==================== API ENDPOINTS ====================
+
+// Health check endpoint
 app.get('/health', (req, res) => {
   console.log('🏥 Health check запрос получен');
   try {
@@ -529,13 +402,11 @@ app.get('/api/users', (req, res) => {
   try {
     console.log('👥 Запрос пользователей');
     const usersData = loadUsers();
-    const subscriptions = getAllSubscriptions();
     
     const usersWithSubscriptionStatus = usersData.users.map(user => {
       const hasActiveSubscription = isSubscriptionActive(user.id);
       return {
         ...user,
-        payment_status: hasActiveSubscription ? 'paid' : 'unpaid',
         subscription_active: hasActiveSubscription
       };
     });
@@ -554,7 +425,6 @@ app.get('/api/stats', (req, res) => {
     const usersData = loadUsers();
     const requestsData = loadJoinRequests();
     const subscriptions = getAllSubscriptions();
-    const payments = getAllPayments();
     
     const users = usersData.users;
     const requests = requestsData.requests;
@@ -586,13 +456,6 @@ app.get('/api/stats', (req, res) => {
     
     const totalSubscriptions = subscriptions.length;
     
-    const totalPayments = payments.length;
-    const successfulPayments = payments.filter(p => p.status === 'succeeded').length;
-    const pendingPayments = payments.filter(p => p.status === 'pending').length;
-    const totalRevenue = payments
-      .filter(p => p.status === 'succeeded')
-      .reduce((sum, p) => sum + p.amount, 0);
-    
     const stats = {
       totalUsers,
       activeUsers,
@@ -608,10 +471,10 @@ app.get('/api/stats', (req, res) => {
       totalSubscriptions,
       activeSubscriptions,
       expiredSubscriptions,
-      totalPayments,
-      successfulPayments,
-      pendingPayments,
-      totalRevenue
+      totalPayments: 0, // Убрали платежи
+      successfulPayments: 0,
+      pendingPayments: 0,
+      totalRevenue: 0
     };
     
     console.log('✅ Статистика отправлена:', stats);
@@ -657,12 +520,7 @@ app.post('/api/send-message', async (req, res) => {
     console.error('❌ Ошибка при отправке сообщения:', error);
     
     if (error.code === 403) {
-      const usersData = loadUsers();
-      const userIndex = usersData.users.findIndex(u => u.id === parseInt(userId));
-      if (userIndex !== -1) {
-        usersData.users[userIndex].is_blocked = true;
-        saveUsers(usersData);
-      }
+      markUserAsBlocked(parseInt(userId));
       res.status(403).json({ error: 'Пользователь заблокировал бота' });
     } else {
       res.status(500).json({ error: 'Ошибка при отправке сообщения' });
@@ -694,12 +552,7 @@ app.post('/api/broadcast', async (req, res) => {
         errors++;
         
         if (error.code === 403) {
-          const usersData = loadUsers();
-          const userIndex = usersData.users.findIndex(u => u.id === userId);
-          if (userIndex !== -1) {
-            usersData.users[userIndex].is_blocked = true;
-            saveUsers(usersData);
-          }
+          markUserAsBlocked(userId);
         }
       }
     }
@@ -793,30 +646,9 @@ app.get('/api/subscriptions', (req, res) => {
   }
 });
 
+// Убрали эндпоинт платежей
 app.get('/api/payments', (req, res) => {
-  try {
-    console.log('💰 Запрос платежей');
-    const payments = getAllPayments();
-    const usersData = loadUsers();
-    
-    const paymentsWithUsers = payments.map(payment => {
-      const user = usersData.users.find(u => u.id === payment.userId);
-      return {
-        ...payment,
-        user: user ? {
-          username: user.username,
-          first_name: user.first_name,
-          last_name: user.last_name
-        } : null
-      };
-    });
-    
-    console.log(`✅ Отправлено ${paymentsWithUsers.length} платежей`);
-    res.json({ payments: paymentsWithUsers });
-  } catch (error) {
-    console.error('❌ Ошибка при получении платежей:', error);
-    res.status(500).json({ error: 'Ошибка сервера' });
-  }
+  res.json({ payments: [] }); // Пустой массив, так как платежи убрали
 });
 
 app.post('/api/deactivate-subscription', (req, res) => {
@@ -831,13 +663,6 @@ app.post('/api/deactivate-subscription', (req, res) => {
     const success = deactivateSubscription(userId);
     
     if (success) {
-      const usersData = loadUsers();
-      const userIndex = usersData.users.findIndex(u => u.id === userId);
-      if (userIndex !== -1) {
-        usersData.users[userIndex].payment_status = 'unpaid';
-        saveUsers(usersData);
-      }
-      
       console.log('✅ Подписка деактивирована');
       res.json({ success: true, message: 'Подписка деактивирована' });
     } else {
@@ -848,6 +673,27 @@ app.post('/api/deactivate-subscription', (req, res) => {
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
+
+// Эндпоинт для ручного добавления подписки (для тестирования)
+app.post('/api/add-subscription', (req, res) => {
+  try {
+    const { userId, duration = 30 } = req.body;
+    console.log(`➕ Добавление подписки для пользователя ${userId} на ${duration} дней`);
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'Не указан userId' });
+    }
+    
+    const subscription = addSubscription(userId, duration);
+    console.log('✅ Подписка добавлена');
+    res.json({ success: true, subscription });
+  } catch (error) {
+    console.error('❌ Ошибка при добавлении подписки:', error);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ==================== TELEGRAM BOT HANDLERS ====================
 
 // Обработка запросов на вступление в канал
 bot.on('chat_join_request', async (joinRequest) => {
@@ -933,7 +779,7 @@ bot.onText(/\/start/, async (msg) => {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: hasActiveSubscription ? '✅ Подписка активна' : '💳 Купить подписку (10₽)', callback_data: hasActiveSubscription ? 'subscription_info' : 'buy_subscription' }
+          { text: hasActiveSubscription ? '✅ Подписка активна' : '💳 Получить подписку', callback_data: hasActiveSubscription ? 'subscription_info' : 'get_subscription' }
         ],
         [
           { text: '📋 Подробнее о канале', callback_data: 'about_channel' }
@@ -1001,55 +847,27 @@ bot.on('callback_query', async (query) => {
   let options = {};
   
   switch (data) {
-    case 'buy_subscription':
-      try {
-        const payment = await createPayment(
-          10,
-          'Подписка на канал "Первый Панч" на 30 дней',
-          user.id
-        );
-        
-        addPayment(user.id, payment.id, 10);
-        
-        responseText = `💳 *Оплата подписки*
+    case 'get_subscription':
+      responseText = `💳 *Получение подписки*
 
 💰 Стоимость: *10 рублей*
 ⏰ Срок: *30 дней*
 
-Для оплаты нажмите кнопку ниже и следуйте инструкциям:`;
-        
-        options = {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '💳 Оплатить 10₽', url: payment.confirmation.confirmation_url }
-              ],
-              [
-                { text: '🔄 Проверить оплату', callback_data: `check_payment_${payment.id}` }
-              ],
-              [
-                { text: '🔙 Назад', callback_data: 'main_menu' }
-              ]
+Для получения подписки обратитесь к администратору:`;
+      
+      options = {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '👨‍💼 Связаться с админом', url: 'https://t.me/johnyestet' }
+            ],
+            [
+              { text: '🔙 Назад', callback_data: 'main_menu' }
             ]
-          }
-        };
-      } catch (error) {
-        console.error('Ошибка создания платежа:', error);
-        responseText = `❌ *Ошибка создания платежа*
-
-Попробуйте позже или обратитесь в поддержку.`;
-        options = {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '🔙 Назад', callback_data: 'main_menu' }
-              ]
-            ]
-          }
-        };
-      }
+          ]
+        }
+      };
       break;
       
     case 'subscription_info': {
@@ -1062,7 +880,6 @@ bot.on('callback_query', async (query) => {
 
 📅 Активна до: *${endDate.toLocaleDateString('ru-RU')}*
 ⏰ Осталось дней: *${daysLeft}*
-💰 Стоимость: *${subscription.amount}₽*
 
 Ваша подписка активна! Вы можете подавать заявки на вступление в канал.`;
       } else {
@@ -1076,7 +893,7 @@ bot.on('callback_query', async (query) => {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: '💳 Продлить подписку', callback_data: 'buy_subscription' }
+              { text: '💳 Получить подписку', callback_data: 'get_subscription' }
             ],
             [
               { text: '🔙 Назад', callback_data: 'main_menu' }
@@ -1122,7 +939,7 @@ bot.on('callback_query', async (query) => {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: '💳 Купить подписку (10₽)', callback_data: 'buy_subscription' }
+              { text: '💳 Получить подписку', callback_data: 'get_subscription' }
             ],
             [
               { text: '🔙 Назад', callback_data: 'main_menu' }
@@ -1183,7 +1000,7 @@ bot.on('callback_query', async (query) => {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: hasActiveSubscription ? '✅ Подписка активна' : '💳 Купить подписку (10₽)', callback_data: hasActiveSubscription ? 'subscription_info' : 'buy_subscription' }
+              { text: hasActiveSubscription ? '✅ Подписка активна' : '💳 Получить подписку', callback_data: hasActiveSubscription ? 'subscription_info' : 'get_subscription' }
             ],
             [
               { text: '📋 Подробнее о канале', callback_data: 'about_channel' }
@@ -1197,93 +1014,6 @@ bot.on('callback_query', async (query) => {
           ]
         }
       };
-      break;
-    }
-      
-    default: {
-      if (data.startsWith('check_payment_')) {
-        const paymentId = data.replace('check_payment_', '');
-        
-        try {
-          const paymentStatus = await getPaymentStatus(paymentId);
-          
-          if (paymentStatus.status === 'succeeded') {
-            updatePaymentStatus(paymentId, 'succeeded');
-            const subscription = addSubscription(user.id, paymentId, paymentStatus.amount.value);
-            updateUserPaymentStatus(user.id, 'paid');
-            
-            responseText = `🎉 *Платеж успешно обработан!*
-
-✅ Подписка активирована на 30 дней
-📅 Действует до: *${new Date(subscription.endDate).toLocaleDateString('ru-RU')}*
-
-Теперь вы можете подавать заявки на вступление в канал!`;
-            
-            options = {
-              parse_mode: 'Markdown',
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    { text: '🏠 Главное меню', callback_data: 'main_menu' }
-                  ]
-                ]
-              }
-            };
-          } else if (paymentStatus.status === 'pending') {
-            responseText = `⏳ *Платеж обрабатывается*
-
-Пожалуйста, подождите. Проверьте статус через несколько минут.`;
-            
-            options = {
-              parse_mode: 'Markdown',
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    { text: '🔄 Проверить снова', callback_data: `check_payment_${paymentId}` }
-                  ],
-                  [
-                    { text: '🔙 Назад', callback_data: 'main_menu' }
-                  ]
-                ]
-              }
-            };
-          } else {
-            responseText = `❌ *Платеж не найден или отменен*
-
-Попробуйте создать новый платеж.`;
-            
-            options = {
-              parse_mode: 'Markdown',
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    { text: '💳 Создать новый платеж', callback_data: 'buy_subscription' }
-                  ],
-                  [
-                    { text: '🔙 Назад', callback_data: 'main_menu' }
-                  ]
-                ]
-              }
-            };
-          }
-        } catch (error) {
-          console.error('Ошибка проверки платежа:', error);
-          responseText = `❌ *Ошибка проверки платежа*
-
-Попробуйте позже или обратитесь в поддержку.`;
-          
-          options = {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: '🔙 Назад', callback_data: 'main_menu' }
-                ]
-              ]
-            }
-          };
-        }
-      }
       break;
     }
   }
@@ -1337,7 +1067,7 @@ app.use('*', (req, res) => {
   });
 });
 
-// Запуск сервера - КРИТИЧЕСКИ ВАЖНО: слушаем на всех интерфейсах!
+// Запуск сервера
 app.listen(PORT, '0.0.0.0', () => {
   console.log('🚀 =================================');
   console.log(`🌐 API сервер запущен на порту ${PORT}`);
