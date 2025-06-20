@@ -45,7 +45,9 @@ export async function createYukassaPayment(amount, description, metadata = {}) {
       metadata: metadata,
       receipt: {
         customer: {
-          email: 'noreply@firstpunch.ru'
+          full_name: 'Тестовый Пользователь',
+          email: 'test@firstpunch.ru',
+          phone: '+79991234567'
         },
         items: [
           {
@@ -59,7 +61,8 @@ export async function createYukassaPayment(amount, description, metadata = {}) {
             payment_mode: 'full_payment',
             payment_subject: 'service'
           }
-        ]
+        ],
+        tax_system_code: 1
       }
     };
 
