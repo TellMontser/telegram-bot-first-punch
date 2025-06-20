@@ -4,6 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import TelegramBot from 'node-telegram-bot-api';
 import { fileURLToPath } from 'url';
+import { createSubscriptionPayment, loadPayments, savePayments, updatePaymentStatus, getPaymentByPaymentId } from './payments.js';
+import { verifyWebhookSignature } from './yukassa.js';
 
 // Получаем __dirname для ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -46,6 +48,9 @@ app.use((req, res, next) => {
   
   next();
 });
+
+// Middleware для webhook ЮKassa (должен быть ДО express.json())
+app.use('/api/yukassa-webhook', express.raw({ type: 'application/json' }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -205,13 +210,15 @@ function markUserAsBlocked(userId) {
   }
 }
 
-// Функции для подписок (без платежей)
-function addSubscription(userId, duration = 30) {
+// Функции для подписок
+function addSubscription(userId, paymentId, amount, duration = 30) {
   const subscriptionsData = loadSubscriptions();
   
   const subscription = {
     id: Date.now() + Math.random(),
     userId: userId,
+    paymentId: paymentId,
+    amount: amount,
     duration: duration,
     startDate: new Date().toISOString(),
     endDate: new Date(Date.now() + duration * 24 * 60 * 60 * 1000).toISOString(),
@@ -425,9 +432,11 @@ app.get('/api/stats', (req, res) => {
     const usersData = loadUsers();
     const requestsData = loadJoinRequests();
     const subscriptions = getAllSubscriptions();
+    const paymentsData = loadPayments();
     
     const users = usersData.users;
     const requests = requestsData.requests;
+    const payments = paymentsData.payments;
     
     const totalUsers = users.length;
     const activeUsers = users.filter(user => !user.is_blocked).length;
@@ -455,6 +464,12 @@ app.get('/api/stats', (req, res) => {
     }).length;
     
     const totalSubscriptions = subscriptions.length;
+    const totalPayments = payments.length;
+    const successfulPayments = payments.filter(p => p.status === 'succeeded').length;
+    const pendingPayments = payments.filter(p => p.status === 'pending').length;
+    const totalRevenue = payments
+      .filter(p => p.status === 'succeeded')
+      .reduce((sum, p) => sum + p.amount, 0);
     
     const stats = {
       totalUsers,
@@ -471,10 +486,10 @@ app.get('/api/stats', (req, res) => {
       totalSubscriptions,
       activeSubscriptions,
       expiredSubscriptions,
-      totalPayments: 0, // Убрали платежи
-      successfulPayments: 0,
-      pendingPayments: 0,
-      totalRevenue: 0
+      totalPayments,
+      successfulPayments,
+      pendingPayments,
+      totalRevenue
     };
     
     console.log('✅ Статистика отправлена:', stats);
@@ -646,9 +661,30 @@ app.get('/api/subscriptions', (req, res) => {
   }
 });
 
-// Убрали эндпоинт платежей
 app.get('/api/payments', (req, res) => {
-  res.json({ payments: [] }); // Пустой массив, так как платежи убрали
+  try {
+    console.log('💰 Запрос платежей');
+    const paymentsData = loadPayments();
+    const usersData = loadUsers();
+    
+    const paymentsWithUsers = paymentsData.payments.map(payment => {
+      const user = usersData.users.find(u => u.id === payment.userId);
+      return {
+        ...payment,
+        user: user ? {
+          username: user.username,
+          first_name: user.first_name,
+          last_name: user.last_name
+        } : null
+      };
+    });
+    
+    console.log(`✅ Отправлено ${paymentsWithUsers.length} платежей`);
+    res.json({ payments: paymentsWithUsers });
+  } catch (error) {
+    console.error('❌ Ошибка при получении платежей:', error);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
 });
 
 app.post('/api/deactivate-subscription', (req, res) => {
@@ -674,22 +710,90 @@ app.post('/api/deactivate-subscription', (req, res) => {
   }
 });
 
-// Эндпоинт для ручного добавления подписки (для тестирования)
-app.post('/api/add-subscription', (req, res) => {
+// Эндпоинт для создания платежа
+app.post('/api/create-payment', async (req, res) => {
   try {
-    const { userId, duration = 30 } = req.body;
-    console.log(`➕ Добавление подписки для пользователя ${userId} на ${duration} дней`);
+    const { userId } = req.body;
+    console.log(`💳 Создание платежа для пользователя ${userId}`);
     
     if (!userId) {
       return res.status(400).json({ error: 'Не указан userId' });
     }
     
-    const subscription = addSubscription(userId, duration);
-    console.log('✅ Подписка добавлена');
-    res.json({ success: true, subscription });
+    const usersData = loadUsers();
+    const user = usersData.users.find(u => u.id === userId);
+    
+    if (!user) {
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
+    
+    const payment = await createSubscriptionPayment(userId, user);
+    
+    console.log('✅ Платеж создан');
+    res.json({ 
+      success: true, 
+      payment: {
+        paymentId: payment.paymentId,
+        confirmationUrl: payment.confirmationUrl,
+        amount: payment.amount
+      }
+    });
   } catch (error) {
-    console.error('❌ Ошибка при добавлении подписки:', error);
-    res.status(500).json({ error: 'Ошибка сервера' });
+    console.error('❌ Ошибка при создании платежа:', error);
+    res.status(500).json({ error: 'Ошибка при создании платежа' });
+  }
+});
+
+// Webhook для ЮKassa
+app.post('/api/yukassa-webhook', (req, res) => {
+  try {
+    console.log('🔔 Получен webhook от ЮKassa');
+    
+    const signature = req.headers['x-yookassa-signature'];
+    const body = req.body.toString();
+    
+    // Проверяем подпись (опционально)
+    // if (!verifyWebhookSignature(body, signature)) {
+    //   console.error('❌ Неверная подпись webhook');
+    //   return res.status(400).json({ error: 'Invalid signature' });
+    // }
+    
+    const event = JSON.parse(body);
+    console.log('📦 Данные webhook:', event);
+    
+    if (event.event === 'payment.succeeded') {
+      const payment = event.object;
+      console.log(`💰 Платеж успешен: ${payment.id}`);
+      
+      // Обновляем статус платежа
+      updatePaymentStatus(payment.id, 'succeeded');
+      
+      // Создаем подписку
+      const userId = parseInt(payment.metadata.userId);
+      const amount = parseFloat(payment.amount.value);
+      
+      if (userId) {
+        addSubscription(userId, payment.id, amount, 30);
+        console.log(`✅ Подписка создана для пользователя ${userId}`);
+        
+        // Отправляем уведомление пользователю
+        bot.sendMessage(userId, `🎉 Поздравляем! Ваша подписка на канал "Первый Панч" активирована на 30 дней!
+
+💳 Платеж: ${amount}₽
+📅 Действует до: ${new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('ru-RU')}
+
+Теперь вы можете подавать заявки на вступление в канал!`);
+      }
+    } else if (event.event === 'payment.canceled') {
+      const payment = event.object;
+      console.log(`❌ Платеж отменен: ${payment.id}`);
+      updatePaymentStatus(payment.id, 'cancelled');
+    }
+    
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('❌ Ошибка обработки webhook:', error);
+    res.status(500).json({ error: 'Ошибка обработки webhook' });
   }
 });
 
@@ -848,26 +952,49 @@ bot.on('callback_query', async (query) => {
   
   switch (data) {
     case 'get_subscription':
-      responseText = `💳 *Получение подписки*
+      try {
+        const payment = await createSubscriptionPayment(user.id, user);
+        
+        responseText = `💳 *Оплата подписки*
 
 💰 Стоимость: *10 рублей*
 ⏰ Срок: *30 дней*
 
-Для получения подписки обратитесь к администратору:`;
-      
-      options = {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '👨‍💼 Связаться с админом', url: 'https://t.me/johnyestet' }
-            ],
-            [
-              { text: '🔙 Назад', callback_data: 'main_menu' }
+Для оплаты нажмите кнопку ниже:`;
+        
+        options = {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '💳 Оплатить 10₽', url: payment.confirmationUrl }
+              ],
+              [
+                { text: '🔙 Назад', callback_data: 'main_menu' }
+              ]
             ]
-          ]
-        }
-      };
+          }
+        };
+      } catch (error) {
+        console.error('Ошибка создания платежа:', error);
+        responseText = `❌ *Ошибка создания платежа*
+
+Попробуйте позже или обратитесь к администратору.`;
+        
+        options = {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '👨‍💼 Связаться с админом', url: 'https://t.me/johnyestet' }
+              ],
+              [
+                { text: '🔙 Назад', callback_data: 'main_menu' }
+              ]
+            ]
+          }
+        };
+      }
       break;
       
     case 'subscription_info': {
@@ -1074,6 +1201,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🤖 Бот "Первый Панч" работает`);
   console.log(`📊 API доступен по адресу: /api`);
   console.log(`🏥 Health check: /health`);
+  console.log(`💳 ЮKassa webhook: /api/yukassa-webhook`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'production'}`);
   console.log(`🔗 URL: https://telegram-bot-first-punch.onrender.com`);
   console.log('🚀 =================================');
