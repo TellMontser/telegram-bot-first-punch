@@ -12,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-// Render автоматически назначает порт через переменную окружения PORT
+// Render автоматически назначает порт
 const PORT = process.env.PORT || 10000;
 
 // Константы для ЮKassa
@@ -29,31 +29,37 @@ const BOT_TOKEN = '7604320716:AAFK-L72uch_OF2gliQacoPVz4RjlqvZXlc';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// CORS настройки - разрешаем все домены для админки
+// МАКСИМАЛЬНО ОТКРЫТЫЕ CORS настройки для админки
 app.use(cors({
-  origin: '*', // Разрешаем все домены
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: false
+  origin: '*', // Разрешаем ВСЕ домены
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH'],
+  allowedHeaders: '*', // Разрешаем ВСЕ заголовки
+  credentials: false,
+  optionsSuccessStatus: 200
 }));
 
-// Добавляем дополнительные CORS заголовки
+// Дополнительные CORS заголовки для гарантии
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.header('Access-Control-Allow-Methods', '*');
+  res.header('Access-Control-Allow-Headers', '*');
+  res.header('Access-Control-Max-Age', '86400');
+  
+  // Логируем все запросы
+  console.log(`📨 ${req.method} ${req.url} from ${req.get('Origin') || 'unknown'}`);
   
   // Отвечаем на preflight запросы
   if (req.method === 'OPTIONS') {
-    res.sendStatus(200);
-    return;
+    console.log('✅ Preflight request handled');
+    return res.status(200).end();
   }
   
   next();
 });
 
-app.use(express.json());
-app.use(express.raw({ type: 'application/json' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.raw({ type: 'application/json', limit: '10mb' }));
 
 // Создаем директорию для данных если её нет
 const dataDir = path.dirname(DATA_FILE);
@@ -485,29 +491,43 @@ function declineJoinRequest(chatId, userId) {
   });
 }
 
-// Health check endpoint - ВАЖНО: должен быть первым!
+// ГЛАВНЫЙ Health check endpoint - ДОЛЖЕН БЫТЬ ПЕРВЫМ!
 app.get('/health', (req, res) => {
-  console.log('Health check requested');
-  res.status(200).json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    port: PORT,
-    env: process.env.NODE_ENV || 'production'
-  });
+  console.log('🏥 Health check запрос получен');
+  try {
+    res.status(200).json({ 
+      status: 'ok', 
+      service: 'telegram-bot-first-punch',
+      timestamp: new Date().toISOString(),
+      port: PORT,
+      env: process.env.NODE_ENV || 'production',
+      uptime: process.uptime(),
+      memory: process.memoryUsage()
+    });
+  } catch (error) {
+    console.error('❌ Health check error:', error);
+    res.status(500).json({ status: 'error', error: error.message });
+  }
 });
 
 // Корневой endpoint
 app.get('/', (req, res) => {
+  console.log('🏠 Корневой запрос получен');
   res.json({ 
-    message: 'Telegram Bot API Server', 
+    message: 'Telegram Bot "Первый Панч" API Server', 
     status: 'running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/health',
+      api: '/api/*'
+    }
   });
 });
 
 // API endpoints
 app.get('/api/users', (req, res) => {
   try {
+    console.log('👥 Запрос пользователей');
     const usersData = loadUsers();
     const subscriptions = getAllSubscriptions();
     
@@ -520,15 +540,17 @@ app.get('/api/users', (req, res) => {
       };
     });
     
+    console.log(`✅ Отправлено ${usersWithSubscriptionStatus.length} пользователей`);
     res.json({ users: usersWithSubscriptionStatus });
   } catch (error) {
-    console.error('Ошибка при получении пользователей:', error);
+    console.error('❌ Ошибка при получении пользователей:', error);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
 
 app.get('/api/stats', (req, res) => {
   try {
+    console.log('📊 Запрос статистики');
     const usersData = loadUsers();
     const requestsData = loadJoinRequests();
     const subscriptions = getAllSubscriptions();
@@ -571,7 +593,7 @@ app.get('/api/stats', (req, res) => {
       .filter(p => p.status === 'succeeded')
       .reduce((sum, p) => sum + p.amount, 0);
     
-    res.json({
+    const stats = {
       totalUsers,
       activeUsers,
       blockedUsers,
@@ -590,9 +612,12 @@ app.get('/api/stats', (req, res) => {
       successfulPayments,
       pendingPayments,
       totalRevenue
-    });
+    };
+    
+    console.log('✅ Статистика отправлена:', stats);
+    res.json(stats);
   } catch (error) {
-    console.error('Ошибка при получении статистики:', error);
+    console.error('❌ Ошибка при получении статистики:', error);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
@@ -600,14 +625,16 @@ app.get('/api/stats', (req, res) => {
 app.get('/api/messages/:userId', (req, res) => {
   try {
     const userId = parseInt(req.params.userId);
+    console.log(`💬 Запрос сообщений для пользователя ${userId}`);
     const messagesData = loadMessages();
     const userMessages = messagesData.messages
       .filter(msg => msg.userId === userId)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     
+    console.log(`✅ Отправлено ${userMessages.length} сообщений`);
     res.json({ messages: userMessages });
   } catch (error) {
-    console.error('Ошибка при получении сообщений:', error);
+    console.error('❌ Ошибка при получении сообщений:', error);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
@@ -615,6 +642,7 @@ app.get('/api/messages/:userId', (req, res) => {
 app.post('/api/send-message', async (req, res) => {
   try {
     const { userId, message } = req.body;
+    console.log(`📤 Отправка сообщения пользователю ${userId}: ${message}`);
     
     if (!userId || !message) {
       return res.status(400).json({ error: 'Не указан userId или message' });
@@ -623,9 +651,10 @@ app.post('/api/send-message', async (req, res) => {
     await bot.sendMessage(userId, message);
     addMessage(userId, message, true, 'admin');
     
+    console.log('✅ Сообщение отправлено');
     res.json({ success: true, message: 'Сообщение отправлено' });
   } catch (error) {
-    console.error('Ошибка при отправке сообщения:', error);
+    console.error('❌ Ошибка при отправке сообщения:', error);
     
     if (error.code === 403) {
       const usersData = loadUsers();
@@ -644,6 +673,7 @@ app.post('/api/send-message', async (req, res) => {
 app.post('/api/broadcast', async (req, res) => {
   try {
     const { userIds, message } = req.body;
+    console.log(`📢 Рассылка сообщения ${userIds.length} пользователям`);
     
     if (!userIds || !Array.isArray(userIds) || !message) {
       return res.status(400).json({ error: 'Неверные параметры' });
@@ -660,7 +690,7 @@ app.post('/api/broadcast', async (req, res) => {
         
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
-        console.error(`Ошибка при отправке сообщения пользователю ${userId}:`, error);
+        console.error(`❌ Ошибка при отправке сообщения пользователю ${userId}:`, error);
         errors++;
         
         if (error.code === 403) {
@@ -674,6 +704,7 @@ app.post('/api/broadcast', async (req, res) => {
       }
     }
     
+    console.log(`✅ Рассылка завершена: отправлено ${sent}, ошибок ${errors}`);
     res.json({ 
       success: true, 
       sent, 
@@ -682,20 +713,22 @@ app.post('/api/broadcast', async (req, res) => {
       message: `Рассылка завершена. Отправлено: ${sent}, ошибок: ${errors}` 
     });
   } catch (error) {
-    console.error('Ошибка при рассылке:', error);
+    console.error('❌ Ошибка при рассылке:', error);
     res.status(500).json({ error: 'Ошибка при рассылке' });
   }
 });
 
 app.get('/api/join-requests', (req, res) => {
   try {
+    console.log('📋 Запрос заявок на вступление');
     const requestsData = loadJoinRequests();
     const sortedRequests = requestsData.requests.sort((a, b) => 
       new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
+    console.log(`✅ Отправлено ${sortedRequests.length} заявок`);
     res.json({ requests: sortedRequests });
   } catch (error) {
-    console.error('Ошибка при получении запросов на вступление:', error);
+    console.error('❌ Ошибка при получении запросов на вступление:', error);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
@@ -703,6 +736,7 @@ app.get('/api/join-requests', (req, res) => {
 app.post('/api/approve-join-request', async (req, res) => {
   try {
     const { chatId, userId } = req.body;
+    console.log(`✅ Одобрение заявки: chat ${chatId}, user ${userId}`);
     
     if (!chatId || !userId) {
       return res.status(400).json({ error: 'Не указан chatId или userId' });
@@ -711,7 +745,7 @@ app.post('/api/approve-join-request', async (req, res) => {
     await approveJoinRequest(chatId, userId);
     res.json({ success: true, message: 'Запрос одобрен' });
   } catch (error) {
-    console.error('Ошибка при одобрении запроса:', error);
+    console.error('❌ Ошибка при одобрении запроса:', error);
     res.status(500).json({ error: 'Ошибка при одобрении запроса' });
   }
 });
@@ -719,6 +753,7 @@ app.post('/api/approve-join-request', async (req, res) => {
 app.post('/api/decline-join-request', async (req, res) => {
   try {
     const { chatId, userId } = req.body;
+    console.log(`❌ Отклонение заявки: chat ${chatId}, user ${userId}`);
     
     if (!chatId || !userId) {
       return res.status(400).json({ error: 'Не указан chatId или userId' });
@@ -727,13 +762,14 @@ app.post('/api/decline-join-request', async (req, res) => {
     await declineJoinRequest(chatId, userId);
     res.json({ success: true, message: 'Запрос отклонен' });
   } catch (error) {
-    console.error('Ошибка при отклонении запроса:', error);
+    console.error('❌ Ошибка при отклонении запроса:', error);
     res.status(500).json({ error: 'Ошибка при отклонении запроса' });
   }
 });
 
 app.get('/api/subscriptions', (req, res) => {
   try {
+    console.log('💳 Запрос подписок');
     const subscriptions = getAllSubscriptions();
     const usersData = loadUsers();
     
@@ -749,15 +785,17 @@ app.get('/api/subscriptions', (req, res) => {
       };
     });
     
+    console.log(`✅ Отправлено ${subscriptionsWithUsers.length} подписок`);
     res.json({ subscriptions: subscriptionsWithUsers });
   } catch (error) {
-    console.error('Ошибка при получении подписок:', error);
+    console.error('❌ Ошибка при получении подписок:', error);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
 
 app.get('/api/payments', (req, res) => {
   try {
+    console.log('💰 Запрос платежей');
     const payments = getAllPayments();
     const usersData = loadUsers();
     
@@ -773,9 +811,10 @@ app.get('/api/payments', (req, res) => {
       };
     });
     
+    console.log(`✅ Отправлено ${paymentsWithUsers.length} платежей`);
     res.json({ payments: paymentsWithUsers });
   } catch (error) {
-    console.error('Ошибка при получении платежей:', error);
+    console.error('❌ Ошибка при получении платежей:', error);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
@@ -783,6 +822,7 @@ app.get('/api/payments', (req, res) => {
 app.post('/api/deactivate-subscription', (req, res) => {
   try {
     const { userId } = req.body;
+    console.log(`🚫 Деактивация подписки для пользователя ${userId}`);
     
     if (!userId) {
       return res.status(400).json({ error: 'Не указан userId' });
@@ -798,19 +838,20 @@ app.post('/api/deactivate-subscription', (req, res) => {
         saveUsers(usersData);
       }
       
+      console.log('✅ Подписка деактивирована');
       res.json({ success: true, message: 'Подписка деактивирована' });
     } else {
       res.status(404).json({ error: 'Активная подписка не найдена' });
     }
   } catch (error) {
-    console.error('Ошибка при деактивации подписки:', error);
+    console.error('❌ Ошибка при деактивации подписки:', error);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
 
 // Обработка запросов на вступление в канал
 bot.on('chat_join_request', async (joinRequest) => {
-  console.log('Получен запрос на вступление:', joinRequest);
+  console.log('📥 Получен запрос на вступление:', joinRequest);
   
   const requestsData = loadJoinRequests();
   
@@ -821,7 +862,7 @@ bot.on('chat_join_request', async (joinRequest) => {
   );
   
   if (existingPendingRequest) {
-    console.log(`Запрос от пользователя ${joinRequest.from.id} уже существует и ожидает обработки`);
+    console.log(`⚠️ Запрос от пользователя ${joinRequest.from.id} уже существует и ожидает обработки`);
     return;
   }
   
@@ -847,12 +888,12 @@ bot.on('chat_join_request', async (joinRequest) => {
       await bot.approveChatJoinRequest(joinRequest.chat.id, joinRequest.from.id);
       newRequest.status = 'approved';
       newRequest.processed_at = new Date().toISOString();
-      console.log(`Запрос автоматически одобрен для пользователя с активной подпиской ${joinRequest.from.first_name} (ID: ${joinRequest.from.id})`);
+      console.log(`✅ Запрос автоматически одобрен для пользователя с активной подпиской ${joinRequest.from.first_name} (ID: ${joinRequest.from.id})`);
     } catch (error) {
-      console.error('Ошибка при автоматическом одобрении запроса:', error);
+      console.error('❌ Ошибка при автоматическом одобрении запроса:', error);
     }
   } else {
-    console.log(`Новый запрос на вступление от ${joinRequest.from.first_name} (ID: ${joinRequest.from.id}) - подписка неактивна`);
+    console.log(`⏳ Новый запрос на вступление от ${joinRequest.from.first_name} (ID: ${joinRequest.from.id}) - подписка неактивна`);
   }
   
   requestsData.requests.push(newRequest);
@@ -1262,7 +1303,7 @@ bot.on('callback_query', async (query) => {
 
 // Обработка ошибок
 bot.on('error', (error) => {
-  console.error('Ошибка бота:', error);
+  console.error('❌ Ошибка бота:', error);
 });
 
 bot.on('polling_error', (error) => {
@@ -1272,7 +1313,7 @@ bot.on('polling_error', (error) => {
       try {
         body = JSON.parse(error.response.body);
       } catch (parseError) {
-        console.error('Ошибка при парсинге JSON:', parseError);
+        console.error('❌ Ошибка при парсинге JSON:', parseError);
         return;
       }
     } else {
@@ -1280,21 +1321,30 @@ bot.on('polling_error', (error) => {
     }
     
     if (body.description && body.description.includes('blocked')) {
-      console.log('Пользователь заблокировал бота');
+      console.log('⚠️ Пользователь заблокировал бота');
     }
   }
 });
 
-// Обработка 404
+// Обработка 404 - ДОЛЖНА БЫТЬ ПОСЛЕДНЕЙ!
 app.use('*', (req, res) => {
-  res.status(404).json({ error: 'Endpoint не найден' });
+  console.log(`❓ 404 запрос: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ 
+    error: 'Endpoint не найден',
+    method: req.method,
+    url: req.originalUrl,
+    timestamp: new Date().toISOString()
+  });
 });
 
-// Запуск сервера - ВАЖНО: слушаем на всех интерфейсах (0.0.0.0)
+// Запуск сервера - КРИТИЧЕСКИ ВАЖНО: слушаем на всех интерфейсах!
 app.listen(PORT, '0.0.0.0', () => {
+  console.log('🚀 =================================');
   console.log(`🌐 API сервер запущен на порту ${PORT}`);
   console.log(`🤖 Бот "Первый Панч" работает`);
   console.log(`📊 API доступен по адресу: /api`);
   console.log(`🏥 Health check: /health`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'production'}`);
+  console.log(`🔗 URL: https://telegram-bot-first-punch.onrender.com`);
+  console.log('🚀 =================================');
 });
