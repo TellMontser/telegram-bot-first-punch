@@ -45,20 +45,21 @@ export async function createYukassaPayment(amount, description, metadata = {}) {
       metadata: metadata,
       receipt: {
         customer: {
-          email: 'customer@example.com'
+          email: 'noreply@firstpunch.ru'
         },
         items: [
           {
-            description: description,
+            description: 'Подписка на канал "Первый Панч" на 30 дней',
             quantity: '1.00',
             amount: {
               value: amount.toFixed(2),
               currency: 'RUB'
             },
-            vat_code: 1
+            vat_code: 1,
+            payment_mode: 'full_payment',
+            payment_subject: 'service'
           }
-        ],
-        tax_system_code: 1
+        ]
       }
     };
 
