@@ -28,8 +28,31 @@ const BOT_TOKEN = '7604320716:AAFK-L72uch_OF2gliQacoPVz4RjlqvZXlc';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-app.use(cors());
+// CORS настройки - разрешаем все домены для админки
+app.use(cors({
+  origin: '*', // Разрешаем все домены
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: false
+}));
+
+// Добавляем дополнительные CORS заголовки
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  
+  // Отвечаем на preflight запросы
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+    return;
+  }
+  
+  next();
+});
+
 app.use(express.json());
+app.use(express.raw({ type: 'application/json' }));
 
 // Создаем директорию для данных если её нет
 const dataDir = path.dirname(DATA_FILE);
