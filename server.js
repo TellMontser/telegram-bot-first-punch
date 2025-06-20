@@ -12,7 +12,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+// Render автоматически назначает порт через переменную окружения PORT
+const PORT = process.env.PORT || 10000;
 
 // Константы для ЮKassa
 const YUKASSA_SHOP_ID = '1103466';
@@ -484,9 +485,24 @@ function declineJoinRequest(chatId, userId) {
   });
 }
 
-// Health check endpoint
+// Health check endpoint - ВАЖНО: должен быть первым!
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  console.log('Health check requested');
+  res.status(200).json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    port: PORT,
+    env: process.env.NODE_ENV || 'production'
+  });
+});
+
+// Корневой endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Telegram Bot API Server', 
+    status: 'running',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // API endpoints
@@ -1274,8 +1290,11 @@ app.use('*', (req, res) => {
   res.status(404).json({ error: 'Endpoint не найден' });
 });
 
-app.listen(PORT, () => {
+// Запуск сервера
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🌐 API сервер запущен на порту ${PORT}`);
   console.log(`🤖 Бот "Первый Панч" работает`);
   console.log(`📊 API доступен по адресу: /api`);
+  console.log(`🏥 Health check: /health`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'production'}`);
 });
