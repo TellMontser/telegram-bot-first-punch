@@ -217,8 +217,9 @@ app.post('/api/send-message', upload.single('media'), async (req, res) => {
       }
       
       console.log(`📤 Отправка медиафайла пользователю ${userId}: ${req.file.originalname}`);
+      console.log(`📋 Тип файла: ${req.file.mimetype}, размер: ${req.file.size} байт`);
       
-      // Определяем тип медиафайла
+      // Определяем тип медиафайла и метод отправки
       let sendMethod;
       if (req.file.mimetype.startsWith('image/')) {
         sendMethod = 'sendPhoto';
@@ -228,20 +229,25 @@ app.post('/api/send-message', upload.single('media'), async (req, res) => {
         sendMethod = 'sendDocument';
       }
       
+      console.log(`🎯 Используем метод: ${sendMethod}`);
+      
       // Подготавливаем опции
       const options = {
         caption: mediaCaption || message || ''
       };
       
       // Добавляем инлайн клавиатуру если есть
-      if (inlineKeyboard && inlineKeyboard.length > 0) {
+      if (inlineKeyboard && Array.isArray(inlineKeyboard) && inlineKeyboard.length > 0) {
         options.reply_markup = {
           inline_keyboard: inlineKeyboard
         };
+        console.log('⌨️ Добавлена инлайн клавиатура:', inlineKeyboard);
       }
       
-      // Отправляем медиафайл
+      // Отправляем медиафайл через буфер
+      console.log('📤 Отправка медиафайла через Telegram API...');
       await bot[sendMethod](userId, req.file.buffer, options);
+      console.log('✅ Медиафайл успешно отправлен');
       
     } else {
       // Обычное текстовое сообщение
@@ -260,10 +266,11 @@ app.post('/api/send-message', upload.single('media'), async (req, res) => {
       const options = {};
       
       // Добавляем инлайн клавиатуру если есть
-      if (inlineKeyboard && inlineKeyboard.length > 0) {
+      if (inlineKeyboard && Array.isArray(inlineKeyboard) && inlineKeyboard.length > 0) {
         options.reply_markup = {
           inline_keyboard: inlineKeyboard
         };
+        console.log('⌨️ Добавлена инлайн клавиатура:', inlineKeyboard);
       }
       
       // Отправляем текстовое сообщение
@@ -273,7 +280,7 @@ app.post('/api/send-message', upload.single('media'), async (req, res) => {
     // Сохраняем сообщение в базу данных
     await addMessage(userId, message || mediaCaption || 'Медиафайл', true, 'admin');
     
-    console.log('✅ Сообщение отправлено');
+    console.log('✅ Сообщение отправлено и сохранено в БД');
     res.json({ success: true, message: 'Сообщение отправлено' });
   } catch (error) {
     console.error('❌ Ошибка при отправке сообщения:', error);
