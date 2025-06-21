@@ -78,6 +78,110 @@ app.use((req, res, next) => {
 // Middleware для webhook ЮKassa (должен быть ДО express.json())
 app.use('/api/yukassa-webhook', express.raw({ type: 'application/json' }));
 
+// ВАЖНО: Обработка отправки сообщений с медиафайлами ДОЛЖНА быть ДО глобальных body parsers
+// Обновленный endpoint для отправки сообщений с поддержкой медиафайлов
+app.post('/api/send-message', upload.single('media'), async (req, res) => {
+  try {
+    let userId, message, inlineKeyboard, mediaCaption;
+    
+    // Проверяем, есть ли медиафайл (FormData) или это обычный JSON
+    if (req.file) {
+      // Запрос с медиафайлом
+      userId = parseInt(req.body.userId);
+      message = req.body.message;
+      mediaCaption = req.body.mediaCaption;
+      
+      // Безопасная обработка inlineKeyboard для FormData
+      if (req.body.inlineKeyboard && typeof req.body.inlineKeyboard === 'string') {
+        try {
+          inlineKeyboard = JSON.parse(req.body.inlineKeyboard);
+        } catch (parseError) {
+          console.error('❌ Ошибка парсинга inlineKeyboard:', parseError);
+          inlineKeyboard = null;
+        }
+      } else {
+        inlineKeyboard = req.body.inlineKeyboard || null;
+      }
+      
+      console.log(`📤 Отправка медиафайла пользователю ${userId}: ${req.file.originalname}`);
+      console.log(`📋 Тип файла: ${req.file.mimetype}, размер: ${req.file.size} байт`);
+      
+      // Определяем тип медиафайла и метод отправки
+      let sendMethod;
+      if (req.file.mimetype.startsWith('image/')) {
+        sendMethod = 'sendPhoto';
+      } else if (req.file.mimetype.startsWith('video/')) {
+        sendMethod = 'sendVideo';
+      } else {
+        sendMethod = 'sendDocument';
+      }
+      
+      console.log(`🎯 Используем метод: ${sendMethod}`);
+      
+      // Подготавливаем опции
+      const options = {
+        caption: mediaCaption || message || ''
+      };
+      
+      // Добавляем инлайн клавиатуру если есть
+      if (inlineKeyboard && Array.isArray(inlineKeyboard) && inlineKeyboard.length > 0) {
+        options.reply_markup = {
+          inline_keyboard: inlineKeyboard
+        };
+        console.log('⌨️ Добавлена инлайн клавиатура:', inlineKeyboard);
+      }
+      
+      // Отправляем медиафайл через буфер
+      console.log('📤 Отправка медиафайла через Telegram API...');
+      await bot[sendMethod](userId, req.file.buffer, options);
+      console.log('✅ Медиафайл успешно отправлен');
+      
+    } else {
+      // Обычное текстовое сообщение
+      const data = req.body;
+      userId = data.userId;
+      message = data.message;
+      inlineKeyboard = data.inlineKeyboard;
+      
+      console.log(`📤 Отправка текстового сообщения пользователю ${userId}: ${message}`);
+      
+      if (!userId || !message) {
+        return res.status(400).json({ error: 'Не указан userId или message' });
+      }
+      
+      // Подготавливаем опции для сообщения
+      const options = {};
+      
+      // Добавляем инлайн клавиатуру если есть
+      if (inlineKeyboard && Array.isArray(inlineKeyboard) && inlineKeyboard.length > 0) {
+        options.reply_markup = {
+          inline_keyboard: inlineKeyboard
+        };
+        console.log('⌨️ Добавлена инлайн клавиатура:', inlineKeyboard);
+      }
+      
+      // Отправляем текстовое сообщение
+      await bot.sendMessage(userId, message, options);
+    }
+    
+    // Сохраняем сообщение в базу данных
+    await addMessage(userId, message || mediaCaption || 'Медиафайл', true, 'admin');
+    
+    console.log('✅ Сообщение отправлено и сохранено в БД');
+    res.json({ success: true, message: 'Сообщение отправлено' });
+  } catch (error) {
+    console.error('❌ Ошибка при отправке сообщения:', error);
+    
+    if (error.code === 403) {
+      await markUserAsBlocked(parseInt(userId));
+      res.status(403).json({ error: 'Пользователь заблокировал бота' });
+    } else {
+      res.status(500).json({ error: 'Ошибка при отправке сообщения', details: error.message });
+    }
+  }
+});
+
+// Глобальные body parsers ПОСЛЕ обработки файлов
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -189,108 +293,6 @@ app.get('/api/messages/:userId', async (req, res) => {
   } catch (error) {
     console.error('❌ Ошибка при получении сообщений:', error);
     res.status(500).json({ error: 'Ошибка сервера' });
-  }
-});
-
-// Обновленный endpoint для отправки сообщений с поддержкой медиафайлов
-app.post('/api/send-message', upload.single('media'), async (req, res) => {
-  try {
-    let userId, message, inlineKeyboard, mediaCaption;
-    
-    // Проверяем, есть ли медиафайл (FormData) или это обычный JSON
-    if (req.file) {
-      // Запрос с медиафайлом
-      userId = parseInt(req.body.userId);
-      message = req.body.message;
-      mediaCaption = req.body.mediaCaption;
-      
-      // Безопасная обработка inlineKeyboard для FormData
-      if (req.body.inlineKeyboard && typeof req.body.inlineKeyboard === 'string') {
-        try {
-          inlineKeyboard = JSON.parse(req.body.inlineKeyboard);
-        } catch (parseError) {
-          console.error('❌ Ошибка парсинга inlineKeyboard:', parseError);
-          inlineKeyboard = null;
-        }
-      } else {
-        inlineKeyboard = req.body.inlineKeyboard || null;
-      }
-      
-      console.log(`📤 Отправка медиафайла пользователю ${userId}: ${req.file.originalname}`);
-      console.log(`📋 Тип файла: ${req.file.mimetype}, размер: ${req.file.size} байт`);
-      
-      // Определяем тип медиафайла и метод отправки
-      let sendMethod;
-      if (req.file.mimetype.startsWith('image/')) {
-        sendMethod = 'sendPhoto';
-      } else if (req.file.mimetype.startsWith('video/')) {
-        sendMethod = 'sendVideo';
-      } else {
-        sendMethod = 'sendDocument';
-      }
-      
-      console.log(`🎯 Используем метод: ${sendMethod}`);
-      
-      // Подготавливаем опции
-      const options = {
-        caption: mediaCaption || message || ''
-      };
-      
-      // Добавляем инлайн клавиатуру если есть
-      if (inlineKeyboard && Array.isArray(inlineKeyboard) && inlineKeyboard.length > 0) {
-        options.reply_markup = {
-          inline_keyboard: inlineKeyboard
-        };
-        console.log('⌨️ Добавлена инлайн клавиатура:', inlineKeyboard);
-      }
-      
-      // Отправляем медиафайл через буфер
-      console.log('📤 Отправка медиафайла через Telegram API...');
-      await bot[sendMethod](userId, req.file.buffer, options);
-      console.log('✅ Медиафайл успешно отправлен');
-      
-    } else {
-      // Обычное текстовое сообщение
-      const data = req.body;
-      userId = data.userId;
-      message = data.message;
-      inlineKeyboard = data.inlineKeyboard;
-      
-      console.log(`📤 Отправка текстового сообщения пользователю ${userId}: ${message}`);
-      
-      if (!userId || !message) {
-        return res.status(400).json({ error: 'Не указан userId или message' });
-      }
-      
-      // Подготавливаем опции для сообщения
-      const options = {};
-      
-      // Добавляем инлайн клавиатуру если есть
-      if (inlineKeyboard && Array.isArray(inlineKeyboard) && inlineKeyboard.length > 0) {
-        options.reply_markup = {
-          inline_keyboard: inlineKeyboard
-        };
-        console.log('⌨️ Добавлена инлайн клавиатура:', inlineKeyboard);
-      }
-      
-      // Отправляем текстовое сообщение
-      await bot.sendMessage(userId, message, options);
-    }
-    
-    // Сохраняем сообщение в базу данных
-    await addMessage(userId, message || mediaCaption || 'Медиафайл', true, 'admin');
-    
-    console.log('✅ Сообщение отправлено и сохранено в БД');
-    res.json({ success: true, message: 'Сообщение отправлено' });
-  } catch (error) {
-    console.error('❌ Ошибка при отправке сообщения:', error);
-    
-    if (error.code === 403) {
-      await markUserAsBlocked(parseInt(userId));
-      res.status(403).json({ error: 'Пользователь заблокировал бота' });
-    } else {
-      res.status(500).json({ error: 'Ошибка при отправке сообщения', details: error.message });
-    }
   }
 });
 
