@@ -184,14 +184,54 @@ app.get('/api/messages/:userId', async (req, res) => {
 
 app.post('/api/send-message', async (req, res) => {
   try {
-    const { userId, message } = req.body;
+    const { userId, message, media, inlineKeyboard } = req.body;
     console.log(`📤 Отправка сообщения пользователю ${userId}: ${message}`);
     
     if (!userId || !message) {
       return res.status(400).json({ error: 'Не указан userId или message' });
     }
     
-    await bot.sendMessage(userId, message);
+    // Подготавливаем опции для сообщения
+    const options = {};
+    
+    // Добавляем инлайн клавиатуру если есть
+    if (inlineKeyboard && inlineKeyboard.length > 0) {
+      options.reply_markup = {
+        inline_keyboard: inlineKeyboard
+      };
+    }
+    
+    // Отправляем сообщение в зависимости от типа
+    if (media) {
+      // Отправка медиафайлов
+      switch (media.type) {
+        case 'photo':
+          await bot.sendPhoto(userId, media.file, {
+            caption: media.caption || message,
+            ...options
+          });
+          break;
+        case 'video':
+          await bot.sendVideo(userId, media.file, {
+            caption: media.caption || message,
+            ...options
+          });
+          break;
+        case 'document':
+          await bot.sendDocument(userId, media.file, {
+            caption: media.caption || message,
+            ...options
+          });
+          break;
+        default:
+          await bot.sendMessage(userId, message, options);
+      }
+    } else {
+      // Обычное текстовое сообщение
+      await bot.sendMessage(userId, message, options);
+    }
+    
+    // Сохраняем сообщение в базу данных
     await addMessage(userId, message, true, 'admin');
     
     console.log('✅ Сообщение отправлено');
