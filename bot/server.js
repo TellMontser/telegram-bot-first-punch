@@ -203,7 +203,18 @@ app.post('/api/send-message', upload.single('media'), async (req, res) => {
       userId = parseInt(req.body.userId);
       message = req.body.message;
       mediaCaption = req.body.mediaCaption;
-      inlineKeyboard = req.body.inlineKeyboard ? JSON.parse(req.body.inlineKeyboard) : null;
+      
+      // Безопасная обработка inlineKeyboard для FormData
+      if (req.body.inlineKeyboard && typeof req.body.inlineKeyboard === 'string') {
+        try {
+          inlineKeyboard = JSON.parse(req.body.inlineKeyboard);
+        } catch (parseError) {
+          console.error('❌ Ошибка парсинга inlineKeyboard:', parseError);
+          inlineKeyboard = null;
+        }
+      } else {
+        inlineKeyboard = req.body.inlineKeyboard || null;
+      }
       
       console.log(`📤 Отправка медиафайла пользователю ${userId}: ${req.file.originalname}`);
       
