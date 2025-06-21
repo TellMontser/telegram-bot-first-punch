@@ -105,6 +105,50 @@ async function declineJoinRequest(chatId, userId) {
   }
 }
 
+// ==================== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОДПИСКАМИ ====================
+
+async function cancelUserSubscription(userId) {
+  try {
+    console.log(`🚫 Отмена подписки для пользователя ${userId}`);
+    
+    // Получаем активную подписку пользователя
+    const subscription = await getUserSubscription(userId);
+    
+    if (subscription && subscription.status === 'active') {
+      // Обновляем статус подписки на cancelled
+      await updateSubscriptionStatus(subscription.id, userId, 'cancelled');
+      
+      console.log(`✅ Подписка отменена для пользователя ${userId}`);
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('❌ Ошибка при отмене подписки:', error);
+    return false;
+  }
+}
+
+async function getSubscriptionInfo(userId) {
+  try {
+    const subscription = await getUserSubscription(userId);
+    const isActive = await isSubscriptionActive(userId);
+    
+    return {
+      hasSubscription: !!subscription,
+      isActive: isActive,
+      subscription: subscription
+    };
+  } catch (error) {
+    console.error('❌ Ошибка при получении информации о подписке:', error);
+    return {
+      hasSubscription: false,
+      isActive: false,
+      subscription: null
+    };
+  }
+}
+
 // ==================== API ENDPOINTS ====================
 
 // Health check endpoint
@@ -592,10 +636,13 @@ app.post('/api/yukassa-webhook', async (req, res) => {
         
         // Отправляем уведомление пользователю с кнопкой вступления в канал
         const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        const message = `🎉 Поздравляем! Ваша подписка на канал "Первый Панч" активирована на 30 дней!
+        const message = `🎉 Поздравляем! Ваша ежемесячная подписка на канал "Первый Панч" активирована!
 
 💳 Платеж: ${amount}₽
 📅 Действует до: ${endDate.toLocaleDateString('ru-RU')}
+🔄 Тип: Ежемесячная подписка
+
+⚠️ ВАЖНО: Это НЕ автоплатеж! За день до окончания мы напомним вам о продлении.
 
 Теперь вы можете подавать заявки на вступление в канал!`;
 
@@ -604,6 +651,9 @@ app.post('/api/yukassa-webhook', async (req, res) => {
             inline_keyboard: [
               [
                 { text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }
+              ],
+              [
+                { text: '📊 Статус подписки', callback_data: 'subscription_status' }
               ]
             ]
           }
@@ -660,6 +710,35 @@ bot.on('chat_join_request', async (joinRequest) => {
       }
     } else {
       console.log(`⏳ Новый запрос на вступление от ${joinRequest.from.first_name} (ID: ${joinRequest.from.id}) - подписка неактивна`);
+      
+      // Отправляем сообщение о необходимости подписки
+      const message = `❌ Для вступления в канал "Первый Панч" необходима активная подписка.
+
+💰 Стоимость: 10₽ в месяц
+⏰ Срок: 30 дней
+🔄 Без автопродления
+
+Оформите подписку и повторите заявку на вступление.`;
+
+      const options = {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '💳 Оформить подписку', callback_data: 'get_subscription' }
+            ],
+            [
+              { text: '📋 Подробнее о канале', callback_data: 'about_channel' }
+            ]
+          ]
+        }
+      };
+
+      try {
+        await bot.sendMessage(joinRequest.from.id, message, options);
+        await addMessage(joinRequest.from.id, message, true, 'system');
+      } catch (msgError) {
+        console.error('❌ Ошибка отправки уведомления о подписке:', msgError);
+      }
     }
   } catch (error) {
     console.error('❌ Ошибка при обработке запроса на вступление:', error);
@@ -675,13 +754,21 @@ bot.onText(/\/start/, async (msg) => {
     await addOrUpdateUser(user);
     await addMessage(chatId, '/start', false, 'command');
     
-    const hasActiveSubscription = await isSubscriptionActive(user.id);
-    const subscription = await getUserSubscription(user.id);
+    const subscriptionInfo = await getSubscriptionInfo(user.id);
     
-    let subscriptionInfo = '';
-    if (hasActiveSubscription && subscription) {
-      const endDate = new Date(subscription.end_date);
-      subscriptionInfo = `\n\n✅ *У вас активная подписка до ${endDate.toLocaleDateString('ru-RU')}*`;
+    let subscriptionText = '';
+    let mainButton = { text: '💳 Оформить подписку', callback_data: 'get_subscription' };
+    
+    if (subscriptionInfo.isActive && subscriptionInfo.subscription) {
+      const endDate = new Date(subscriptionInfo.subscription.end_date);
+      const daysLeft = Math.ceil((endDate - new Date()) / (1000 * 60 * 60 * 24));
+      
+      subscriptionText = `\n\n✅ *У вас активная ежемесячная подписка*
+📅 Действует до: ${endDate.toLocaleDateString('ru-RU')}
+⏰ Осталось дней: ${daysLeft}
+🔄 Без автопродления`;
+      
+      mainButton = { text: '📊 Управление подпиской', callback_data: 'subscription_management' };
     }
     
     const welcomeMessage = `🎭 *Добро пожаловать в "Первый Панч"!*
@@ -691,7 +778,8 @@ bot.onText(/\/start/, async (msg) => {
 ✨ Становиться увереннее  
 ✨ Находить единомышленников
 
-💰 *Стоимость подписки: 10 рублей на 30 дней*${subscriptionInfo}
+💰 *Ежемесячная подписка: 10 рублей на 30 дней*
+🔄 *Без автопродления - полный контроль*${subscriptionText}
 
 👇 *Выберите действие* 👇`;
 
@@ -699,9 +787,7 @@ bot.onText(/\/start/, async (msg) => {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [
-            { text: hasActiveSubscription ? '✅ Подписка активна' : '💳 Получить подписку', callback_data: hasActiveSubscription ? 'subscription_info' : 'get_subscription' }
-          ],
+          [mainButton],
           [
             { text: '📋 Подробнее о канале', callback_data: 'about_channel' }
           ],
@@ -731,48 +817,63 @@ bot.onText(/\/status/, async (msg) => {
     await addOrUpdateUser(user);
     await addMessage(chatId, '/status', false, 'command');
     
-    const hasActiveSubscription = await isSubscriptionActive(user.id);
-    const subscription = await getUserSubscription(user.id);
+    const subscriptionInfo = await getSubscriptionInfo(user.id);
     
     let statusMessage = '';
+    let buttons = [];
     
-    if (hasActiveSubscription && subscription) {
-      const endDate = new Date(subscription.end_date);
-      const startDate = new Date(subscription.start_date);
+    if (subscriptionInfo.isActive && subscriptionInfo.subscription) {
+      const endDate = new Date(subscriptionInfo.subscription.end_date);
+      const startDate = new Date(subscriptionInfo.subscription.start_date);
       const daysLeft = Math.ceil((endDate - new Date()) / (1000 * 60 * 60 * 24));
       
       statusMessage = `📊 *Статус вашей подписки*
 
 ✅ *Статус:* Активна
-💳 *Сумма платежа:* ${subscription.amount}₽
+💳 *Сумма платежа:* ${subscriptionInfo.subscription.amount}₽
 📅 *Дата оплаты:* ${startDate.toLocaleDateString('ru-RU')}
 ⏰ *Действует до:* ${endDate.toLocaleDateString('ru-RU')}
 🗓 *Осталось дней:* ${daysLeft}
 
-🔄 *Следующее списание:* Автоматического продления нет. Вам нужно будет оплатить подписку заново после истечения срока.
+🔄 *Тип подписки:* Ежемесячная (без автопродления)
+⚠️ *Важно:* За день до окончания мы напомним о продлении
 
 🚀 Вы можете подавать заявки на вступление в канал!`;
+
+      buttons = [
+        [
+          { text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }
+        ],
+        [
+          { text: '🚫 Отменить подписку', callback_data: 'cancel_subscription' }
+        ],
+        [
+          { text: '🏠 Главное меню', callback_data: 'main_menu' }
+        ]
+      ];
     } else {
       statusMessage = `📊 *Статус вашей подписки*
 
 ❌ *Статус:* Неактивна
 💰 *Стоимость:* 10₽ на 30 дней
+🔄 *Тип:* Ежемесячная (без автопродления)
 
-Для получения доступа к каналу необходимо оплатить подписку.`;
+Для получения доступа к каналу необходимо оформить подписку.`;
+
+      buttons = [
+        [
+          { text: '💳 Оформить подписку', callback_data: 'get_subscription' }
+        ],
+        [
+          { text: '🏠 Главное меню', callback_data: 'main_menu' }
+        ]
+      ];
     }
     
     const options = {
       parse_mode: 'Markdown',
       reply_markup: {
-        inline_keyboard: [
-          [
-            { text: hasActiveSubscription ? '🚀 Вступить в канал' : '💳 Получить подписку', 
-              callback_data: hasActiveSubscription ? 'join_channel' : 'get_subscription' }
-          ],
-          [
-            { text: '🏠 Главное меню', callback_data: 'main_menu' }
-          ]
-        ]
+        inline_keyboard: buttons
       }
     };
     
@@ -838,23 +939,25 @@ bot.on('callback_query', async (query) => {
     
     switch (data) {
       case 'get_subscription':
-        try {
-          console.log('💳 Пользователь запросил создание платежа:', user);
-          const payment = await createSubscriptionPayment(user.id, user);
-          
-          responseText = `💳 *Оплата подписки*
+        // Проверяем, есть ли уже активная подписка
+        const subscriptionInfo = await getSubscriptionInfo(user.id);
+        
+        if (subscriptionInfo.isActive) {
+          responseText = `✅ *У вас уже есть активная подписка!*
 
-💰 Стоимость: *10 рублей*
-⏰ Срок: *30 дней*
+Ваша подписка действует до: *${new Date(subscriptionInfo.subscription.end_date).toLocaleDateString('ru-RU')}*
 
-Для оплаты нажмите кнопку ниже:`;
+Вы можете подавать заявки на вступление в канал.`;
           
           options = {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [
                 [
-                  { text: '💳 Оплатить 10₽', url: payment.confirmationUrl }
+                  { text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }
+                ],
+                [
+                  { text: '📊 Управление подпиской', callback_data: 'subscription_management' }
                 ],
                 [
                   { text: '🔙 Назад', callback_data: 'main_menu' }
@@ -862,20 +965,105 @@ bot.on('callback_query', async (query) => {
               ]
             }
           };
-        } catch (error) {
-          console.error('❌ Ошибка создания платежа в боте:', error);
-          responseText = `❌ *Ошибка создания платежа*
+        } else {
+          try {
+            console.log('💳 Пользователь запросил создание платежа:', user);
+            const payment = await createSubscriptionPayment(user.id, user);
+            
+            responseText = `💳 *Оформление ежемесячной подписки*
+
+💰 Стоимость: *10 рублей*
+⏰ Срок: *30 дней*
+🔄 *Без автопродления* - полный контроль
+
+Для оплаты нажмите кнопку ниже:`;
+            
+            options = {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '💳 Оплатить 10₽', url: payment.confirmationUrl }
+                  ],
+                  [
+                    { text: '🔙 Назад', callback_data: 'main_menu' }
+                  ]
+                ]
+              }
+            };
+          } catch (error) {
+            console.error('❌ Ошибка создания платежа в боте:', error);
+            responseText = `❌ *Ошибка создания платежа*
 
 Попробуйте позже или обратитесь к администратору.
 
 *Детали ошибки:* ${error.message}`;
+            
+            options = {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '👨‍💼 Связаться с админом', url: 'https://t.me/johnyestet' }
+                  ],
+                  [
+                    { text: '🔙 Назад', callback_data: 'main_menu' }
+                  ]
+                ]
+              }
+            };
+          }
+        }
+        break;
+
+      case 'subscription_management':
+      case 'subscription_status': {
+        const subscription = await getUserSubscription(user.id);
+        const isActive = await isSubscriptionActive(user.id);
+        
+        if (isActive && subscription) {
+          const endDate = new Date(subscription.end_date);
+          const daysLeft = Math.ceil((endDate - new Date()) / (1000 * 60 * 60 * 24));
+          
+          responseText = `📊 *Управление подпиской*
+
+✅ *Статус:* Активна
+📅 *Действует до:* ${endDate.toLocaleDateString('ru-RU')}
+⏰ *Осталось дней:* ${daysLeft}
+💳 *Сумма:* ${subscription.amount}₽
+
+🔄 *Тип:* Ежемесячная подписка без автопродления
+⚠️ *Важно:* За день до окончания мы напомним о продлении
+
+Вы можете отменить подписку в любой момент.`;
           
           options = {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [
                 [
-                  { text: '👨‍💼 Связаться с админом', url: 'https://t.me/johnyestet' }
+                  { text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }
+                ],
+                [
+                  { text: '🚫 Отменить подписку', callback_data: 'cancel_subscription' }
+                ],
+                [
+                  { text: '🔙 Назад', callback_data: 'main_menu' }
+                ]
+              ]
+            }
+          };
+        } else {
+          responseText = `❌ *Подписка неактивна*
+
+У вас нет активной подписки на канал.`;
+          
+          options = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '💳 Оформить подписку', callback_data: 'get_subscription' }
                 ],
                 [
                   { text: '🔙 Назад', callback_data: 'main_menu' }
@@ -885,41 +1073,102 @@ bot.on('callback_query', async (query) => {
           };
         }
         break;
+      }
+
+      case 'cancel_subscription': {
+        const isActive = await isSubscriptionActive(user.id);
         
-      case 'subscription_info': {
-        const subscription = await getUserSubscription(user.id);
-        if (subscription) {
-          const endDate = new Date(subscription.end_date);
-          const daysLeft = Math.ceil((endDate - new Date()) / (1000 * 60 * 60 * 24));
+        if (isActive) {
+          responseText = `🚫 *Отмена подписки*
+
+Вы уверены, что хотите отменить подписку?
+
+⚠️ *Внимание:*
+• Доступ к каналу будет закрыт
+• Возврат средств не предусмотрен
+• Подписку можно будет оформить заново
+
+Подтвердите отмену подписки:`;
           
-          responseText = `✅ *Информация о подписке*
-
-📅 Активна до: *${endDate.toLocaleDateString('ru-RU')}*
-⏰ Осталось дней: *${daysLeft}*
-
-Ваша подписка активна! Вы можете подавать заявки на вступление в канал.`;
-        } else {
-          responseText = `❌ *Подписка не найдена*
-
-У вас нет активной подписки.`;
-        }
-        
-        options = {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }
-              ],
-              [
-                { text: '💳 Получить подписку', callback_data: 'get_subscription' }
-              ],
-              [
-                { text: '🔙 Назад', callback_data: 'main_menu' }
+          options = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '✅ Да, отменить подписку', callback_data: 'confirm_cancel_subscription' }
+                ],
+                [
+                  { text: '❌ Нет, оставить подписку', callback_data: 'subscription_management' }
+                ]
               ]
-            ]
-          }
-        };
+            }
+          };
+        } else {
+          responseText = `❌ *Нет активной подписки*
+
+У вас нет активной подписки для отмены.`;
+          
+          options = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '💳 Оформить подписку', callback_data: 'get_subscription' }
+                ],
+                [
+                  { text: '🔙 Назад', callback_data: 'main_menu' }
+                ]
+              ]
+            }
+          };
+        }
+        break;
+      }
+
+      case 'confirm_cancel_subscription': {
+        const cancelled = await cancelUserSubscription(user.id);
+        
+        if (cancelled) {
+          responseText = `✅ *Подписка отменена*
+
+Ваша подписка успешно отменена.
+
+• Доступ к каналу закрыт
+• Вы можете оформить новую подписку в любое время
+• Спасибо за то, что были с нами!`;
+          
+          options = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '💳 Оформить новую подписку', callback_data: 'get_subscription' }
+                ],
+                [
+                  { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                ]
+              ]
+            }
+          };
+        } else {
+          responseText = `❌ *Ошибка отмены*
+
+Не удалось отменить подписку. Попробуйте позже или обратитесь к администратору.`;
+          
+          options = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '👨‍💼 Связаться с админом', url: 'https://t.me/johnyestet' }
+                ],
+                [
+                  { text: '🔙 Назад', callback_data: 'subscription_management' }
+                ]
+              ]
+            }
+          };
+        }
         break;
       }
 
@@ -965,6 +1214,7 @@ bot.on('callback_query', async (query) => {
 🏆 *А также ежедневный конкурс шуток!* Лучшая забирает 1000 рублей. Просто за хороший панч. В конце месяца супер приз. Победитель получает 100 000 рублей!
 
 💰 *Всё это - всего за 10 рублей в месяц.*
+🔄 *Без автопродления - полный контроль над подпиской*
 
 🚀 *Попадая в Первый Панч ты:*
 • Начинаешь понимать механику юмора
@@ -980,7 +1230,7 @@ bot.on('callback_query', async (query) => {
           reply_markup: {
             inline_keyboard: [
               [
-                { text: '💳 Получить подписку', callback_data: 'get_subscription' }
+                { text: '💳 Оформить подписку', callback_data: 'get_subscription' }
               ],
               [
                 { text: '🔙 Назад', callback_data: 'main_menu' }
@@ -1017,13 +1267,21 @@ bot.on('callback_query', async (query) => {
         break;
         
       case 'main_menu': {
-        const hasActiveSubscription = await isSubscriptionActive(user.id);
-        const subscription = await getUserSubscription(user.id);
+        const subscriptionInfo = await getSubscriptionInfo(user.id);
         
-        let subscriptionInfo = '';
-        if (hasActiveSubscription && subscription) {
-          const endDate = new Date(subscription.end_date);
-          subscriptionInfo = `\n\n✅ *У вас активная подписка до ${endDate.toLocaleDateString('ru-RU')}*`;
+        let subscriptionText = '';
+        let mainButton = { text: '💳 Оформить подписку', callback_data: 'get_subscription' };
+        
+        if (subscriptionInfo.isActive && subscriptionInfo.subscription) {
+          const endDate = new Date(subscriptionInfo.subscription.end_date);
+          const daysLeft = Math.ceil((endDate - new Date()) / (1000 * 60 * 60 * 24));
+          
+          subscriptionText = `\n\n✅ *У вас активная ежемесячная подписка*
+📅 Действует до: ${endDate.toLocaleDateString('ru-RU')}
+⏰ Осталось дней: ${daysLeft}
+🔄 Без автопродления`;
+          
+          mainButton = { text: '📊 Управление подпиской', callback_data: 'subscription_management' };
         }
         
         responseText = `🎭 *Добро пожаловать в "Первый Панч"!*
@@ -1033,16 +1291,15 @@ bot.on('callback_query', async (query) => {
 ✨ Становиться увереннее  
 ✨ Находить единомышленников
 
-💰 *Стоимость подписки: 10 рублей на 30 дней*${subscriptionInfo}
+💰 *Ежемесячная подписка: 10 рублей на 30 дней*
+🔄 *Без автопродления - полный контроль*${subscriptionText}
 
 👇 *Выберите действие* 👇`;
         options = {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [
-                { text: hasActiveSubscription ? '✅ Подписка активна' : '💳 Получить подписку', callback_data: hasActiveSubscription ? 'subscription_info' : 'get_subscription' }
-              ],
+              [mainButton],
               [
                 { text: '📋 Подробнее о канале', callback_data: 'about_channel' }
               ],
