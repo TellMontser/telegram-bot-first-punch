@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import TelegramBot from 'node-telegram-bot-api';
 import { fileURLToPath } from 'url';
+import multer from 'multer';
 import { createSubscriptionPayment } from './payments.js';
 import { verifyWebhookSignature, createSimpleYukassaPayment, getYukassaPayment } from './yukassa.js';
 import {
@@ -38,6 +39,15 @@ const PORT = process.env.PORT || 10000;
 const BOT_TOKEN = '7604320716:AAFK-L72uch_OF2gliQacoPVz4RjlqvZXlc';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+
+// Настройка multer для загрузки файлов
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB
+  }
+});
 
 // МАКСИМАЛЬНО ОТКРЫТЫЕ CORS настройки для админки
 app.use(cors({
@@ -182,57 +192,75 @@ app.get('/api/messages/:userId', async (req, res) => {
   }
 });
 
-app.post('/api/send-message', async (req, res) => {
+// Обновленный endpoint для отправки сообщений с поддержкой медиафайлов
+app.post('/api/send-message', upload.single('media'), async (req, res) => {
   try {
-    const { userId, message, media, inlineKeyboard } = req.body;
-    console.log(`📤 Отправка сообщения пользователю ${userId}: ${message}`);
+    let userId, message, inlineKeyboard, mediaCaption;
     
-    if (!userId || !message) {
-      return res.status(400).json({ error: 'Не указан userId или message' });
-    }
-    
-    // Подготавливаем опции для сообщения
-    const options = {};
-    
-    // Добавляем инлайн клавиатуру если есть
-    if (inlineKeyboard && inlineKeyboard.length > 0) {
-      options.reply_markup = {
-        inline_keyboard: inlineKeyboard
-      };
-    }
-    
-    // Отправляем сообщение в зависимости от типа
-    if (media) {
-      // Отправка медиафайлов
-      switch (media.type) {
-        case 'photo':
-          await bot.sendPhoto(userId, media.file, {
-            caption: media.caption || message,
-            ...options
-          });
-          break;
-        case 'video':
-          await bot.sendVideo(userId, media.file, {
-            caption: media.caption || message,
-            ...options
-          });
-          break;
-        case 'document':
-          await bot.sendDocument(userId, media.file, {
-            caption: media.caption || message,
-            ...options
-          });
-          break;
-        default:
-          await bot.sendMessage(userId, message, options);
+    // Проверяем, есть ли медиафайл (FormData) или это обычный JSON
+    if (req.file) {
+      // Запрос с медиафайлом
+      userId = parseInt(req.body.userId);
+      message = req.body.message;
+      mediaCaption = req.body.mediaCaption;
+      inlineKeyboard = req.body.inlineKeyboard ? JSON.parse(req.body.inlineKeyboard) : null;
+      
+      console.log(`📤 Отправка медиафайла пользователю ${userId}: ${req.file.originalname}`);
+      
+      // Определяем тип медиафайла
+      let sendMethod;
+      if (req.file.mimetype.startsWith('image/')) {
+        sendMethod = 'sendPhoto';
+      } else if (req.file.mimetype.startsWith('video/')) {
+        sendMethod = 'sendVideo';
+      } else {
+        sendMethod = 'sendDocument';
       }
+      
+      // Подготавливаем опции
+      const options = {
+        caption: mediaCaption || message || ''
+      };
+      
+      // Добавляем инлайн клавиатуру если есть
+      if (inlineKeyboard && inlineKeyboard.length > 0) {
+        options.reply_markup = {
+          inline_keyboard: inlineKeyboard
+        };
+      }
+      
+      // Отправляем медиафайл
+      await bot[sendMethod](userId, req.file.buffer, options);
+      
     } else {
       // Обычное текстовое сообщение
+      const data = req.body;
+      userId = data.userId;
+      message = data.message;
+      inlineKeyboard = data.inlineKeyboard;
+      
+      console.log(`📤 Отправка текстового сообщения пользователю ${userId}: ${message}`);
+      
+      if (!userId || !message) {
+        return res.status(400).json({ error: 'Не указан userId или message' });
+      }
+      
+      // Подготавливаем опции для сообщения
+      const options = {};
+      
+      // Добавляем инлайн клавиатуру если есть
+      if (inlineKeyboard && inlineKeyboard.length > 0) {
+        options.reply_markup = {
+          inline_keyboard: inlineKeyboard
+        };
+      }
+      
+      // Отправляем текстовое сообщение
       await bot.sendMessage(userId, message, options);
     }
     
     // Сохраняем сообщение в базу данных
-    await addMessage(userId, message, true, 'admin');
+    await addMessage(userId, message || mediaCaption || 'Медиафайл', true, 'admin');
     
     console.log('✅ Сообщение отправлено');
     res.json({ success: true, message: 'Сообщение отправлено' });
@@ -243,7 +271,7 @@ app.post('/api/send-message', async (req, res) => {
       await markUserAsBlocked(parseInt(userId));
       res.status(403).json({ error: 'Пользователь заблокировал бота' });
     } else {
-      res.status(500).json({ error: 'Ошибка при отправке сообщения' });
+      res.status(500).json({ error: 'Ошибка при отправке сообщения', details: error.message });
     }
   }
 });
