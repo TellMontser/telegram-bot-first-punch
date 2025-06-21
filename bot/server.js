@@ -37,7 +37,7 @@ const app = express();
 // Render автоматически назначает порт
 const PORT = process.env.PORT || 10000;
 
-const BOT_TOKEN = '7604320716:AAFK-L72uch_OF2gliQacoPVz4RjlqvZXlc';
+const BOT_TOKEN = '7801546376:AAEr6x5nFu1aIdVUusPzZsJscdL6zzFF6bM';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
