@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
 import TelegramBot from 'node-telegram-bot-api';
 import { fileURLToPath } from 'url';
 import { createSubscriptionPayment } from './payments.js';
