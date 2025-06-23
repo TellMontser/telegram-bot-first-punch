@@ -176,6 +176,54 @@ function getMediaSendMethod(mimeType) {
   }
 }
 
+// Функция для отправки медиафайла через Telegram API
+async function sendMediaToTelegram(userId, file, options = {}) {
+  const sendMethod = getMediaSendMethod(file.mimetype);
+  
+  console.log(`📤 Отправка ${sendMethod} пользователю ${userId}`);
+  console.log(`📋 Файл: ${file.originalname}, размер: ${file.size} байт, тип: ${file.mimetype}`);
+  
+  try {
+    // Создаем объект для отправки файла
+    const fileOptions = {
+      filename: file.originalname,
+      contentType: file.mimetype
+    };
+    
+    let result;
+    
+    switch (sendMethod) {
+      case 'sendPhoto':
+        result = await bot.sendPhoto(userId, file.buffer, options, fileOptions);
+        break;
+      case 'sendVideo':
+        // Для видео добавляем дополнительные опции
+        const videoOptions = {
+          ...options,
+          supports_streaming: true, // Поддержка стриминга
+          duration: undefined, // Telegram определит автоматически
+          width: undefined, // Telegram определит автоматически
+          height: undefined // Telegram определит автоматически
+        };
+        result = await bot.sendVideo(userId, file.buffer, videoOptions, fileOptions);
+        break;
+      case 'sendAudio':
+        result = await bot.sendAudio(userId, file.buffer, options, fileOptions);
+        break;
+      case 'sendDocument':
+      default:
+        result = await bot.sendDocument(userId, file.buffer, options, fileOptions);
+        break;
+    }
+    
+    console.log(`✅ ${sendMethod} успешно отправлен пользователю ${userId}`);
+    return result;
+  } catch (error) {
+    console.error(`❌ Ошибка отправки ${sendMethod} пользователю ${userId}:`, error);
+    throw error;
+  }
+}
+
 // ==================== API ENDPOINTS ====================
 
 // Health check endpoint
@@ -292,11 +340,6 @@ app.post('/api/send-message', upload.single('media'), async (req, res) => {
       console.log(`📤 Отправка медиафайла пользователю ${userId}: ${req.file.originalname}`);
       console.log(`📋 Тип файла: ${req.file.mimetype}, размер: ${req.file.size} байт`);
       
-      // Определяем тип медиафайла и метод отправки
-      const sendMethod = getMediaSendMethod(req.file.mimetype);
-      
-      console.log(`🎯 Используем метод: ${sendMethod}`);
-      
       // Подготавливаем опции
       const options = {
         caption: mediaCaption || message || ''
@@ -310,9 +353,9 @@ app.post('/api/send-message', upload.single('media'), async (req, res) => {
         console.log('⌨️ Добавлена инлайн клавиатура:', inlineKeyboard);
       }
       
-      // Отправляем медиафайл через буфер
+      // Отправляем медиафайл через улучшенную функцию
       console.log('📤 Отправка медиафайла через Telegram API...');
-      await bot[sendMethod](userId, req.file.buffer, options);
+      await sendMediaToTelegram(userId, req.file, options);
       console.log('✅ Медиафайл успешно отправлен');
       
     } else {
@@ -392,11 +435,6 @@ app.post('/api/broadcast', upload.single('media'), async (req, res) => {
       console.log(`📢 Рассылка медиафайла ${userIds.length} пользователям: ${req.file.originalname}`);
       console.log(`📋 Тип файла: ${req.file.mimetype}, размер: ${req.file.size} байт`);
       
-      // Определяем тип медиафайла и метод отправки
-      const sendMethod = getMediaSendMethod(req.file.mimetype);
-      
-      console.log(`🎯 Используем метод для рассылки: ${sendMethod}`);
-      
     } else {
       // Обычное текстовое сообщение
       const data = req.body;
@@ -429,11 +467,8 @@ app.post('/api/broadcast', upload.single('media'), async (req, res) => {
             };
           }
           
-          // Определяем метод отправки для каждого пользователя
-          const sendMethod = getMediaSendMethod(req.file.mimetype);
-          
-          console.log(`📤 Отправка ${sendMethod} пользователю ${userId}`);
-          await bot[sendMethod](userId, req.file.buffer, options);
+          // Используем улучшенную функцию отправки медиафайлов
+          await sendMediaToTelegram(userId, req.file, options);
           await addMessage(userId, mediaCaption || message || 'Медиафайл', true, 'admin');
         } else {
           // Отправляем текстовое сообщение
@@ -452,6 +487,7 @@ app.post('/api/broadcast', upload.single('media'), async (req, res) => {
         
         sent++;
         
+        // Небольшая задержка между отправками для избежания лимитов
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         console.error(`❌ Ошибка при отправке сообщения пользователю ${userId}:`, error);
@@ -473,7 +509,7 @@ app.post('/api/broadcast', upload.single('media'), async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Ошибка при рассылке:', error);
-    res.status(500).json({ error: 'Ошибка при рассылке' });
+    res.status(500).json({ error: 'Ошибка при рассылке', details: error.message });
   }
 });
 
