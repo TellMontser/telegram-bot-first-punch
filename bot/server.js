@@ -151,6 +151,31 @@ async function getSubscriptionInfo(userId) {
   }
 }
 
+// Функция для определения типа медиафайла и соответствующего метода Telegram API
+function getMediaSendMethod(mimeType) {
+  console.log('🔍 Определение типа медиафайла:', mimeType);
+  
+  if (mimeType.startsWith('image/')) {
+    console.log('📸 Тип: изображение -> sendPhoto');
+    return 'sendPhoto';
+  } else if (mimeType.startsWith('video/')) {
+    console.log('🎥 Тип: видео -> sendVideo');
+    return 'sendVideo';
+  } else if (mimeType.startsWith('audio/')) {
+    console.log('🎵 Тип: аудио -> sendAudio');
+    return 'sendAudio';
+  } else if (mimeType === 'application/pdf' || 
+             mimeType.includes('document') || 
+             mimeType.includes('text/') ||
+             mimeType.includes('application/')) {
+    console.log('📄 Тип: документ -> sendDocument');
+    return 'sendDocument';
+  } else {
+    console.log('📎 Тип: неизвестный -> sendDocument (по умолчанию)');
+    return 'sendDocument';
+  }
+}
+
 // ==================== API ENDPOINTS ====================
 
 // Health check endpoint
@@ -268,14 +293,7 @@ app.post('/api/send-message', upload.single('media'), async (req, res) => {
       console.log(`📋 Тип файла: ${req.file.mimetype}, размер: ${req.file.size} байт`);
       
       // Определяем тип медиафайла и метод отправки
-      let sendMethod;
-      if (req.file.mimetype.startsWith('image/')) {
-        sendMethod = 'sendPhoto';
-      } else if (req.file.mimetype.startsWith('video/')) {
-        sendMethod = 'sendVideo';
-      } else {
-        sendMethod = 'sendDocument';
-      }
+      const sendMethod = getMediaSendMethod(req.file.mimetype);
       
       console.log(`🎯 Используем метод: ${sendMethod}`);
       
@@ -375,16 +393,9 @@ app.post('/api/broadcast', upload.single('media'), async (req, res) => {
       console.log(`📋 Тип файла: ${req.file.mimetype}, размер: ${req.file.size} байт`);
       
       // Определяем тип медиафайла и метод отправки
-      let sendMethod;
-      if (req.file.mimetype.startsWith('image/')) {
-        sendMethod = 'sendPhoto';
-      } else if (req.file.mimetype.startsWith('video/')) {
-        sendMethod = 'sendVideo';
-      } else {
-        sendMethod = 'sendDocument';
-      }
+      const sendMethod = getMediaSendMethod(req.file.mimetype);
       
-      console.log(`🎯 Используем метод: ${sendMethod}`);
+      console.log(`🎯 Используем метод для рассылки: ${sendMethod}`);
       
     } else {
       // Обычное текстовое сообщение
@@ -418,16 +429,10 @@ app.post('/api/broadcast', upload.single('media'), async (req, res) => {
             };
           }
           
-          // Определяем метод отправки
-          let sendMethod;
-          if (req.file.mimetype.startsWith('image/')) {
-            sendMethod = 'sendPhoto';
-          } else if (req.file.mimetype.startsWith('video/')) {
-            sendMethod = 'sendVideo';
-          } else {
-            sendMethod = 'sendDocument';
-          }
+          // Определяем метод отправки для каждого пользователя
+          const sendMethod = getMediaSendMethod(req.file.mimetype);
           
+          console.log(`📤 Отправка ${sendMethod} пользователю ${userId}`);
           await bot[sendMethod](userId, req.file.buffer, options);
           await addMessage(userId, mediaCaption || message || 'Медиафайл', true, 'admin');
         } else {
