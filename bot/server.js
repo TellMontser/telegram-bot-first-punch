@@ -342,12 +342,61 @@ app.post('/api/send-message', upload.single('media'), async (req, res) => {
   }
 });
 
-app.post('/api/broadcast', async (req, res) => {
+app.post('/api/broadcast', upload.single('media'), async (req, res) => {
   try {
-    const { userIds, message } = req.body;
-    console.log(`📢 Рассылка сообщения ${userIds.length} пользователям`);
+    let userIds, message, inlineKeyboard, mediaCaption;
     
-    if (!userIds || !Array.isArray(userIds) || !message) {
+    // Проверяем, есть ли медиафайл (FormData) или это обычный JSON
+    if (req.file) {
+      // Запрос с медиафайлом
+      try {
+        userIds = JSON.parse(req.body.userIds);
+      } catch (parseError) {
+        console.error('❌ Ошибка парсинга userIds:', parseError);
+        return res.status(400).json({ error: 'Неверный формат userIds' });
+      }
+      
+      message = req.body.message;
+      mediaCaption = req.body.mediaCaption;
+      
+      // Безопасная обработка inlineKeyboard для FormData
+      if (req.body.inlineKeyboard && typeof req.body.inlineKeyboard === 'string') {
+        try {
+          inlineKeyboard = JSON.parse(req.body.inlineKeyboard);
+        } catch (parseError) {
+          console.error('❌ Ошибка парсинга inlineKeyboard:', parseError);
+          inlineKeyboard = null;
+        }
+      } else {
+        inlineKeyboard = req.body.inlineKeyboard || null;
+      }
+      
+      console.log(`📢 Рассылка медиафайла ${userIds.length} пользователям: ${req.file.originalname}`);
+      console.log(`📋 Тип файла: ${req.file.mimetype}, размер: ${req.file.size} байт`);
+      
+      // Определяем тип медиафайла и метод отправки
+      let sendMethod;
+      if (req.file.mimetype.startsWith('image/')) {
+        sendMethod = 'sendPhoto';
+      } else if (req.file.mimetype.startsWith('video/')) {
+        sendMethod = 'sendVideo';
+      } else {
+        sendMethod = 'sendDocument';
+      }
+      
+      console.log(`🎯 Используем метод: ${sendMethod}`);
+      
+    } else {
+      // Обычное текстовое сообщение
+      const data = req.body;
+      userIds = data.userIds;
+      message = data.message;
+      inlineKeyboard = data.inlineKeyboard;
+      
+      console.log(`📢 Рассылка текстового сообщения ${userIds.length} пользователям`);
+    }
+    
+    if (!userIds || !Array.isArray(userIds) || (!message && !req.file)) {
       return res.status(400).json({ error: 'Неверные параметры' });
     }
     
@@ -356,8 +405,46 @@ app.post('/api/broadcast', async (req, res) => {
     
     for (const userId of userIds) {
       try {
-        await bot.sendMessage(userId, message);
-        await addMessage(userId, message, true, 'admin');
+        if (req.file) {
+          // Отправляем медиафайл
+          const options = {
+            caption: mediaCaption || message || ''
+          };
+          
+          // Добавляем инлайн клавиатуру если есть
+          if (inlineKeyboard && Array.isArray(inlineKeyboard) && inlineKeyboard.length > 0) {
+            options.reply_markup = {
+              inline_keyboard: inlineKeyboard
+            };
+          }
+          
+          // Определяем метод отправки
+          let sendMethod;
+          if (req.file.mimetype.startsWith('image/')) {
+            sendMethod = 'sendPhoto';
+          } else if (req.file.mimetype.startsWith('video/')) {
+            sendMethod = 'sendVideo';
+          } else {
+            sendMethod = 'sendDocument';
+          }
+          
+          await bot[sendMethod](userId, req.file.buffer, options);
+          await addMessage(userId, mediaCaption || message || 'Медиафайл', true, 'admin');
+        } else {
+          // Отправляем текстовое сообщение
+          const options = {};
+          
+          // Добавляем инлайн клавиатуру если есть
+          if (inlineKeyboard && Array.isArray(inlineKeyboard) && inlineKeyboard.length > 0) {
+            options.reply_markup = {
+              inline_keyboard: inlineKeyboard
+            };
+          }
+          
+          await bot.sendMessage(userId, message, options);
+          await addMessage(userId, message, true, 'admin');
+        }
+        
         sent++;
         
         await new Promise(resolve => setTimeout(resolve, 100));
