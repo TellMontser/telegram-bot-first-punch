@@ -24,7 +24,9 @@ import {
   markUserAsBlocked,
   getUser,
   updateUserPaymentData,
-  getUserPaymentData
+  getUserPaymentData,
+  getUserPaymentMethods,
+  disableAutoPayments
 } from './lib/supabase.js';
 import { createSubscriptionPayment, handleSuccessfulPayment } from './payments.js';
 import { getYukassaPayment } from './yukassa.js';
@@ -406,6 +408,44 @@ bot.on('callback_query', async (callbackQuery) => {
       case 'cancel_payment':
         userStates.delete(userId);
         await bot.sendMessage(userId, '❌ Оплата отменена. Вы можете начать заново в любое время.');
+        break;
+
+      case 'disable_autopayments':
+        try {
+          const paymentMethods = await getUserPaymentMethods(userId);
+          let disabledCount = 0;
+          
+          for (const method of paymentMethods) {
+            if (method.auto_payments_enabled) {
+              await disableAutoPayments(method.payment_method_id);
+              disabledCount++;
+            }
+          }
+          
+          const disableMessage = disabledCount > 0 
+            ? `🚫 Автоплатежи отключены!
+
+Отключено способов оплаты: ${disabledCount}
+
+Ваша текущая подписка остается активной до окончания срока действия.`
+            : `ℹ️ У вас нет активных автоплатежей.
+
+Все способы оплаты уже отключены или не настроены.`;
+
+          await bot.sendMessage(userId, disableMessage, {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '📊 Статус подписки', callback_data: 'subscription_status' }],
+                [{ text: '🔙 Главное меню', callback_data: 'main_menu' }]
+              ]
+            }
+          });
+
+          await addMessage(userId, disableMessage, true, 'autopayments_disabled');
+        } catch (error) {
+          console.error('❌ Ошибка отключения автоплатежей:', error);
+          await bot.sendMessage(userId, '❌ Ошибка при отключении автоплатежей. Попробуйте позже.');
+        }
         break;
 
       case 'about_channel':
