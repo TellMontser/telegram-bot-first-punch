@@ -116,18 +116,18 @@ async function cancelUserSubscription(userId) {
   try {
     console.log(`🚫 Отмена рекуррентной подписки для пользователя ${userId}`);
     
+    // Отключаем способ оплаты
+    const paymentMethod = await getPaymentMethodByUserId(userId);
+    if (paymentMethod) {
+      await disablePaymentMethod(userId, paymentMethod.payment_method_id);
+    }
+    
     // Получаем активную подписку пользователя
     const subscription = await getUserSubscription(userId);
     
     if (subscription && subscription.status === 'active') {
       // Обновляем статус подписки на cancelled
       await updateSubscriptionStatus(subscription.id, userId, 'cancelled');
-      
-      // Отключаем автоплатежи
-      const paymentMethod = await getPaymentMethodByUserId(userId);
-      if (paymentMethod) {
-        await disablePaymentMethod(userId, paymentMethod.payment_method_id);
-      }
       
       console.log(`✅ Рекуррентная подписка отменена для пользователя ${userId}`);
       return true;
@@ -150,8 +150,8 @@ async function getSubscriptionInfo(userId) {
       hasSubscription: !!subscription,
       isActive: isActive,
       subscription: subscription,
-      paymentMethod: paymentMethod,
-      isRecurring: !!paymentMethod?.auto_payments_enabled
+      hasRecurring: !!paymentMethod,
+      paymentMethod: paymentMethod
     };
   } catch (error) {
     console.error('❌ Ошибка при получении информации о подписке:', error);
@@ -159,18 +159,17 @@ async function getSubscriptionInfo(userId) {
       hasSubscription: false,
       isActive: false,
       subscription: null,
-      paymentMethod: null,
-      isRecurring: false
+      hasRecurring: false,
+      paymentMethod: null
     };
   }
 }
 
 // ==================== СИСТЕМА АВТОПЛАТЕЖЕЙ ====================
 
-// Функция для обработки автоплатежей
-async function processRecurringPayments() {
+async function processAutoPayments() {
   try {
-    console.log('🔄 Запуск обработки рекуррентных платежей...');
+    console.log('🔄 Запуск обработки автоплатежей...');
     
     const activePaymentMethods = await getActivePaymentMethods();
     console.log(`📋 Найдено активных способов оплаты: ${activePaymentMethods.length}`);
@@ -186,55 +185,55 @@ async function processRecurringPayments() {
           console.log(`💳 Создание автоплатежа для пользователя ${paymentMethod.user_id}`);
           
           // Создаем автоплатеж
-          const autoPayment = await processAutoPayment(
-            paymentMethod.payment_method_id, 
-            paymentMethod.user_id
-          );
+          const autoPayment = await processAutoPayment(paymentMethod.payment_method_id, paymentMethod.user_id);
           
-          if (autoPayment.status === 'succeeded') {
-            // Если автоплатеж успешен, продлеваем подписку
-            await addSubscription(
-              paymentMethod.user_id,
-              autoPayment.paymentId,
-              autoPayment.amount,
-              30, // 30 дней
-              'yukassa'
+          // Обновляем дату следующего платежа (через 10 минут)
+          const nextPayment = new Date(now.getTime() + 10 * 60 * 1000);
+          await updatePaymentMethodNextPayment(paymentMethod.payment_method_id, nextPayment.toISOString());
+          
+          console.log(`✅ Автоплатеж создан для пользователя ${paymentMethod.user_id}: ${autoPayment.paymentId}`);
+          
+          // Отправляем уведомление пользователю
+          try {
+            await bot.sendMessage(paymentMethod.user_id, 
+              `🔄 Автоплатеж выполнен!\n\n💰 Сумма: ${autoPayment.amount}₽\n📅 Следующий платеж: через 10 минут\n\n✅ Ваша подписка продлена автоматически.`
             );
-            
-            // Обновляем дату следующего платежа (через 10 минут)
-            const nextPayment = new Date(now.getTime() + 10 * 60 * 1000);
-            await updatePaymentMethodNextPayment(
-              paymentMethod.payment_method_id,
-              nextPayment.toISOString()
-            );
-            
-            // Отправляем уведомление пользователю
-            await sendAutoPaymentSuccessMessage(paymentMethod.user_id, autoPayment.amount);
-            
-            console.log(`✅ Автоплатеж успешно обработан для пользователя ${paymentMethod.user_id}`);
-          } else {
-            console.log(`⚠️ Автоплатеж не прошел для пользователя ${paymentMethod.user_id}: ${autoPayment.status}`);
-            
-            // Если автоплатеж не прошел, отправляем уведомление
-            await sendAutoPaymentFailedMessage(paymentMethod.user_id);
+          } catch (msgError) {
+            console.error('❌ Ошибка отправки уведомления об автоплатеже:', msgError);
           }
         }
       } catch (error) {
-        console.error(`❌ Ошибка обработки автоплатежа для пользователя ${paymentMethod.user_id}:`, error);
+        console.error(`❌ Ошибка обработки автоплатежа для ${paymentMethod.user_id}:`, error);
+        
+        // Если автоплатеж не удался, отключаем способ оплаты
+        await disablePaymentMethod(paymentMethod.user_id, paymentMethod.payment_method_id);
+        
+        // Уведомляем пользователя
+        try {
+          await bot.sendMessage(paymentMethod.user_id, 
+            `❌ Автоплатеж не удался!\n\n💳 Проблема с картой или недостаточно средств.\n🔄 Автоплатежи отключены.\n\n💡 Для возобновления подписки оформите новую рекуррентную подписку.`,
+            {
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: '💳 Оформить новую подписку', callback_data: 'get_recurring_subscription' }]
+                ]
+              }
+            }
+          );
+        } catch (msgError) {
+          console.error('❌ Ошибка отправки уведомления о неудачном автоплатеже:', msgError);
+        }
       }
     }
     
-    console.log('✅ Обработка рекуррентных платежей завершена');
+    console.log('✅ Обработка автоплатежей завершена');
   } catch (error) {
     console.error('❌ Ошибка в системе автоплатежей:', error);
   }
 }
 
 // Запускаем обработку автоплатежей каждые 5 минут
-setInterval(processRecurringPayments, 5 * 60 * 1000);
-
-// Запускаем первую обработку через 1 минуту после старта
-setTimeout(processRecurringPayments, 60 * 1000);
+setInterval(processAutoPayments, 5 * 60 * 1000);
 
 // ==================== API ENDPOINTS ====================
 
@@ -242,7 +241,6 @@ setTimeout(processRecurringPayments, 60 * 1000);
 app.get('/health', (req, res) => {
   console.log('🏥 Health check запрос получен');
   try {
-    const recurringConfig = getRecurringConfig();
     res.status(200).json({ 
       status: 'ok', 
       service: 'telegram-bot-first-punch',
@@ -253,10 +251,7 @@ app.get('/health', (req, res) => {
       memory: process.memoryUsage(),
       database: 'supabase',
       paymentSystems: ['yukassa'],
-      recurringPayments: {
-        enabled: true,
-        config: recurringConfig
-      }
+      recurringConfig: getRecurringConfig()
     });
   } catch (error) {
     console.error('❌ Health check error:', error);
@@ -267,17 +262,13 @@ app.get('/health', (req, res) => {
 // Корневой endpoint
 app.get('/', (req, res) => {
   console.log('🏠 Корневой запрос получен');
-  const recurringConfig = getRecurringConfig();
   res.json({ 
     message: 'Telegram Bot "Первый Панч" API Server', 
     status: 'running',
     timestamp: new Date().toISOString(),
     database: 'supabase',
     paymentSystems: ['yukassa'],
-    recurringPayments: {
-      enabled: true,
-      config: recurringConfig
-    },
+    recurringConfig: getRecurringConfig(),
     endpoints: {
       health: '/health',
       api: '/api/*'
@@ -298,7 +289,7 @@ app.get('/api/users', async (req, res) => {
         return {
           ...user,
           subscription_active: hasActiveSubscription,
-          has_recurring: !!paymentMethod?.auto_payments_enabled
+          has_recurring: !!paymentMethod
         };
       })
     );
@@ -691,7 +682,7 @@ app.post('/api/update-subscription-status', async (req, res) => {
 });
 
 // Эндпоинт для создания рекуррентной подписки
-app.post('/api/create-payment', async (req, res) => {
+app.post('/api/create-recurring-subscription', async (req, res) => {
   try {
     const { userId } = req.body;
     console.log(`💳 Создание рекуррентной подписки для пользователя ${userId}`);
@@ -708,19 +699,12 @@ app.post('/api/create-payment', async (req, res) => {
     
     console.log('👤 Найден пользователь:', user);
     
-    const payment = await createRecurringSubscription(userId, user);
+    const subscription = await createRecurringSubscription(userId, user);
     
-    console.log('✅ Рекуррентная подписка создана успешно:', payment);
+    console.log('✅ Рекуррентная подписка создана успешно:', subscription);
     res.json({ 
       success: true, 
-      payment: {
-        paymentId: payment.paymentId,
-        confirmationUrl: payment.confirmationUrl,
-        amount: payment.amount,
-        status: payment.status,
-        paymentSystem: payment.paymentSystem,
-        isRecurring: payment.isRecurring
-      }
+      subscription: subscription
     });
   } catch (error) {
     console.error('❌ Ошибка при создании рекуррентной подписки:', error);
@@ -781,11 +765,14 @@ app.post('/api/yukassa-webhook', async (req, res) => {
       
       const userId = parseInt(payment.metadata.userId);
       const amount = parseFloat(payment.amount.value);
-      const paymentType = payment.metadata.payment_type;
+      const paymentType = payment.metadata.payment_type || 'recurring_initial';
       
       if (userId) {
         if (paymentType === 'recurring_initial') {
-          // Это первый рекуррентный платеж - сохраняем способ оплаты
+          // Это стартовый рекуррентный платеж
+          console.log(`🔄 Обработка стартового рекуррентного платежа для пользователя ${userId}`);
+          
+          // Сохраняем способ оплаты если есть
           if (payment.payment_method && payment.payment_method.id) {
             await addPaymentMethod(
               userId,
@@ -794,22 +781,24 @@ app.post('/api/yukassa-webhook', async (req, res) => {
               payment.payment_method.card?.last4 ? `****${payment.payment_method.card.last4}` : null,
               true // Включаем автоплатежи
             );
-            
-            console.log(`✅ Способ оплаты сохранен для пользователя ${userId}: ${payment.payment_method.id}`);
+            console.log(`✅ Способ оплаты сохранен: ${payment.payment_method.id}`);
           }
           
           // Создаем подписку
           await addSubscription(userId, payment.id, amount, 30, 'yukassa');
           console.log(`✅ Рекуррентная подписка создана для пользователя ${userId}`);
           
-          // Отправляем уведомление об успешной подписке
+          // Отправляем уведомление пользователю
           await sendRecurringSubscriptionSuccessMessage(userId, amount);
         } else if (paymentType === 'recurring_auto') {
-          // Это автоплатеж - просто продлеваем подписку
+          // Это автоплатеж
+          console.log(`🔄 Обработка автоплатежа для пользователя ${userId}`);
+          
+          // Продлеваем подписку
           await addSubscription(userId, payment.id, amount, 30, 'yukassa');
           console.log(`✅ Подписка продлена автоплатежом для пользователя ${userId}`);
           
-          // Отправляем уведомление об автоплатеже
+          // Отправляем уведомление об успешном автоплатеже
           await sendAutoPaymentSuccessMessage(userId, amount);
         }
       }
@@ -830,16 +819,14 @@ app.post('/api/yukassa-webhook', async (req, res) => {
 async function sendRecurringSubscriptionSuccessMessage(userId, amount) {
   try {
     const recurringConfig = getRecurringConfig();
-    const message = `🎉 Поздравляем! Ваша рекуррентная подписка на канал "Первый Панч" активирована!
+    const message = `🎉 Рекуррентная подписка активирована!
 
-💳 Стартовый платеж: ${amount}₽ через ЮKassa
+💳 Стартовый платеж: ${amount}₽
 🔄 Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
-📅 Подписка: активна
+📅 Следующий платеж: через ${recurringConfig.intervalMinutes} минут
 
-✨ ОСОБЕННОСТИ РЕКУРРЕНТНОЙ ПОДПИСКИ:
-• Автоматическое продление каждые ${recurringConfig.intervalMinutes} минут
-• Никаких перерывов в доступе к каналу
-• Можете отменить в любой момент
+✅ Теперь ваша подписка будет продлеваться автоматически!
+🚫 Вы можете отменить автоплатежи в любой момент.
 
 Теперь вы можете подавать заявки на вступление в канал!`;
 
@@ -850,10 +837,8 @@ async function sendRecurringSubscriptionSuccessMessage(userId, amount) {
             { text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }
           ],
           [
-            { text: '📊 Статус подписки', callback_data: 'subscription_status' }
-          ],
-          [
-            { text: '🚫 Отменить автоплатежи', callback_data: 'cancel_subscription' }
+            { text: '📊 Статус подписки', callback_data: 'subscription_status' },
+            { text: '🚫 Отменить автоплатежи', callback_data: 'cancel_recurring' }
           ]
         ]
       }
@@ -870,22 +855,20 @@ async function sendRecurringSubscriptionSuccessMessage(userId, amount) {
 async function sendAutoPaymentSuccessMessage(userId, amount) {
   try {
     const recurringConfig = getRecurringConfig();
-    const message = `✅ Автоплатеж успешно выполнен!
+    const message = `✅ Автоплатеж выполнен успешно!
 
-💳 Списано: ${amount}₽
-🔄 Следующий платеж: через ${recurringConfig.intervalMinutes} минут
-📅 Подписка продлена на 30 дней
+💰 Списано: ${amount}₽
+📅 Следующий платеж: через ${recurringConfig.intervalMinutes} минут
+🔄 Подписка продлена автоматически
 
-Ваш доступ к каналу "Первый Панч" продолжается без перерывов!`;
+Ваша подписка на канал "Первый Панч" активна!`;
 
     const options = {
       reply_markup: {
         inline_keyboard: [
           [
-            { text: '📊 Статус подписки', callback_data: 'subscription_status' }
-          ],
-          [
-            { text: '🚫 Отменить автоплатежи', callback_data: 'cancel_subscription' }
+            { text: '📊 Статус подписки', callback_data: 'subscription_status' },
+            { text: '🚫 Отменить автоплатежи', callback_data: 'cancel_recurring' }
           ]
         ]
       }
@@ -895,44 +878,6 @@ async function sendAutoPaymentSuccessMessage(userId, amount) {
     await addMessage(userId, message, true, 'system');
   } catch (msgError) {
     console.error('❌ Ошибка отправки уведомления об автоплатеже:', msgError);
-  }
-}
-
-// Функция для отправки уведомления о неудачном автоплатеже
-async function sendAutoPaymentFailedMessage(userId) {
-  try {
-    const message = `❌ Автоплатеж не прошел
-
-К сожалению, не удалось списать средства с вашей карты.
-
-🔄 Возможные причины:
-• Недостаточно средств на карте
-• Карта заблокирована или истек срок действия
-• Технические проблемы банка
-
-💡 Что делать:
-• Проверьте баланс карты
-• Оформите новую подписку с актуальной картой
-
-⚠️ Автоплатежи приостановлены до решения проблемы.`;
-
-    const options = {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '💳 Оформить новую подписку', callback_data: 'get_subscription_yukassa' }
-          ],
-          [
-            { text: '📞 Связаться с поддержкой', url: 'https://t.me/johnyestet' }
-          ]
-        ]
-      }
-    };
-
-    await bot.sendMessage(userId, message, options);
-    await addMessage(userId, message, true, 'system');
-  } catch (msgError) {
-    console.error('❌ Ошибка отправки уведомления о неудачном автоплатеже:', msgError);
   }
 }
 
@@ -970,24 +915,21 @@ bot.on('chat_join_request', async (joinRequest) => {
       
       // Отправляем сообщение о необходимости рекуррентной подписки
       const recurringConfig = getRecurringConfig();
-      const message = `❌ Для вступления в канал "Первый Панч" необходима активная рекуррентная подписка.
+      const message = `❌ Для вступления в канал "Первый Панч" необходима активная подписка.
 
-💰 Стоимость: ${recurringConfig.initialAmount}₽ стартовый платеж
-🔄 Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
-⏰ Без перерывов в доступе к каналу
+💰 Рекуррентная подписка:
+• Стартовый платеж: ${recurringConfig.initialAmount}₽
+• Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
+🔄 Автоматическое продление
+🚫 Можно отменить в любой момент
 
-✨ ПРЕИМУЩЕСТВА РЕКУРРЕНТНОЙ ПОДПИСКИ:
-• Автоматическое продление
-• Никаких пропусков контента
-• Можете отменить в любой момент
-
-Нажмите кнопку ниже для оформления:`;
+Оформите рекуррентную подписку для доступа к каналу:`;
 
       const options = {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: `💳 Оформить рекуррентную подписку (${recurringConfig.initialAmount}₽)`, callback_data: 'get_recurring_subscription' }
+              { text: `💳 Рекуррентная подписка ${recurringConfig.initialAmount}₽`, callback_data: 'get_recurring_subscription' }
             ],
             [
               { text: '📋 Подробнее о канале', callback_data: 'about_channel' }
@@ -1000,7 +942,7 @@ bot.on('chat_join_request', async (joinRequest) => {
         await bot.sendMessage(joinRequest.from.id, message, options);
         await addMessage(joinRequest.from.id, message, true, 'system');
       } catch (msgError) {
-        console.error('❌ Ошибка отправки уведомления о рекуррентной подписке:', msgError);
+        console.error('❌ Ошибка отправки уведомления о подписке:', msgError);
       }
     }
   } catch (error) {
@@ -1031,15 +973,19 @@ bot.onText(/\/start/, async (msg) => {
 💳 Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
 📅 Действует до: ${endDate.toLocaleDateString('ru-RU')}
 ⏰ Осталось дней: ${daysLeft}
-🔄 Автоматическое продление включено`;
+🔄 Автоматическое продление: ${subscriptionInfo.hasRecurring ? 'включено' : 'отключено'}`;
       
       mainButtons = [
         [{ text: '📊 Управление подпиской', callback_data: 'subscription_management' }],
         [{ text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }]
       ];
+      
+      if (subscriptionInfo.hasRecurring) {
+        mainButtons.push([{ text: '🚫 Отменить автоплатежи', callback_data: 'cancel_recurring' }]);
+      }
     } else {
       mainButtons = [
-        [{ text: `💳 Рекуррентная подписка (${recurringConfig.initialAmount}₽)`, callback_data: 'get_recurring_subscription' }]
+        [{ text: `💳 Рекуррентная подписка ${recurringConfig.initialAmount}₽`, callback_data: 'get_recurring_subscription' }]
       ];
     }
     
@@ -1050,8 +996,10 @@ bot.onText(/\/start/, async (msg) => {
 ✨ Становиться увереннее  
 ✨ Находить единомышленников
 
-💰 *Рекуррентная подписка: ${recurringConfig.initialAmount}₽ + автоплатежи ${recurringConfig.recurringAmount}₽ каждые ${recurringConfig.intervalMinutes} минут*
-🔄 *Автоматическое продление - никаких перерывов*${subscriptionText}
+💰 *Рекуррентная подписка:*
+• Стартовый платеж: ${recurringConfig.initialAmount}₽
+• Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
+🔄 *Автоматическое продление*${subscriptionText}
 
 👇 *Выберите действие* 👇`;
 
@@ -1095,36 +1043,43 @@ bot.onText(/\/status/, async (msg) => {
       const startDate = new Date(subscriptionInfo.subscription.start_date);
       const daysLeft = Math.ceil((endDate - new Date()) / (1000 * 60 * 60 * 24));
       
-      statusMessage = `📊 *Статус вашей рекуррентной подписки*
+      statusMessage = `📊 *Статус вашей подписки*
 
 ✅ *Статус:* Активна
 💳 *Тип:* Рекуррентная подписка
-💰 *Автоплатежи:* ${recurringConfig.recurringAmount}₽ каждые ${recurringConfig.intervalMinutes} минут
+💰 *Сумма платежа:* ${subscriptionInfo.subscription.amount}₽
 📅 *Дата оплаты:* ${startDate.toLocaleDateString('ru-RU')}
 ⏰ *Действует до:* ${endDate.toLocaleDateString('ru-RU')}
 🗓 *Осталось дней:* ${daysLeft}
 
-🔄 *Автоматическое продление:* Включено
-⚡ *Следующий автоплатеж:* В течение ${recurringConfig.intervalMinutes} минут
+🔄 *Автоплатежи:* ${subscriptionInfo.hasRecurring ? 'включены' : 'отключены'}
+💰 *Сумма автоплатежа:* ${recurringConfig.recurringAmount}₽
+⏱ *Интервал:* каждые ${recurringConfig.intervalMinutes} минут
 
 🚀 Вы можете подавать заявки на вступление в канал!`;
 
       buttons = [
-        [{ text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }],
-        [{ text: '🚫 Отменить автоплатежи', callback_data: 'cancel_subscription' }],
-        [{ text: '🏠 Главное меню', callback_data: 'main_menu' }]
+        [{ text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }]
       ];
+      
+      if (subscriptionInfo.hasRecurring) {
+        buttons.push([{ text: '🚫 Отменить автоплатежи', callback_data: 'cancel_recurring' }]);
+      } else {
+        buttons.push([{ text: '🔄 Возобновить автоплатежи', callback_data: 'get_recurring_subscription' }]);
+      }
+      
+      buttons.push([{ text: '🏠 Главное меню', callback_data: 'main_menu' }]);
     } else {
       statusMessage = `📊 *Статус вашей подписки*
 
 ❌ *Статус:* Неактивна
-💰 *Стоимость:* ${recurringConfig.initialAmount}₽ + автоплатежи ${recurringConfig.recurringAmount}₽ каждые ${recurringConfig.intervalMinutes} минут
-🔄 *Тип:* Рекуррентная подписка с автопродлением
+💰 *Стартовый платеж:* ${recurringConfig.initialAmount}₽
+🔄 *Автоплатежи:* каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
 
 Для получения доступа к каналу необходимо оформить рекуррентную подписку.`;
 
       buttons = [
-        [{ text: `💳 Рекуррентная подписка (${recurringConfig.initialAmount}₽)`, callback_data: 'get_recurring_subscription' }],
+        [{ text: `💳 Рекуррентная подписка ${recurringConfig.initialAmount}₽`, callback_data: 'get_recurring_subscription' }],
         [{ text: '🏠 Главное меню', callback_data: 'main_menu' }]
       ];
     }
@@ -1194,19 +1149,15 @@ bot.on('callback_query', async (query) => {
     let responseText = '';
     let options = {};
     
-    const recurringConfig = getRecurringConfig();
-    
     // Обработка создания рекуррентной подписки
     if (data === 'get_recurring_subscription') {
       // Проверяем, есть ли уже активная подписка
       const subscriptionInfo = await getSubscriptionInfo(user.id);
       
       if (subscriptionInfo.isActive) {
-        responseText = `✅ *У вас уже есть активная рекуррентная подписка!*
+        responseText = `✅ *У вас уже есть активная подписка!*
 
 Ваша подписка действует до: *${new Date(subscriptionInfo.subscription.end_date).toLocaleDateString('ru-RU')}*
-
-Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
 
 Вы можете подавать заявки на вступление в канал.`;
         
@@ -1223,18 +1174,16 @@ bot.on('callback_query', async (query) => {
       } else {
         try {
           console.log(`💳 Пользователь запросил создание рекуррентной подписки:`, user);
-          const payment = await createRecurringSubscription(user.id, user);
+          const subscription = await createRecurringSubscription(user.id, user);
+          
+          const recurringConfig = getRecurringConfig();
           
           responseText = `💳 *Оформление рекуррентной подписки*
 
-💰 Стартовый платеж: *${payment.amount} рублей*
-🔄 Автоплатежи: *${recurringConfig.recurringAmount}₽ каждые ${recurringConfig.intervalMinutes} минут*
-⏰ Без перерывов в доступе к каналу
-
-✨ ПРЕИМУЩЕСТВА:
-• Автоматическое продление
-• Никаких пропусков контента  
-• Можете отменить в любой момент
+💰 Стартовый платеж: *${subscription.amount} рублей*
+🔄 Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
+⏰ Автоматическое продление
+🚫 Можно отменить в любой момент
 
 Для оплаты нажмите кнопку ниже:`;
           
@@ -1242,16 +1191,16 @@ bot.on('callback_query', async (query) => {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [
-                [{ text: `💳 Оплатить ${payment.amount}₽`, url: payment.confirmationUrl }],
+                [{ text: `💳 Оплатить ${subscription.amount}₽`, url: subscription.confirmationUrl }],
                 [{ text: '🔙 Назад', callback_data: 'main_menu' }]
               ]
             }
           };
         } catch (error) {
           console.error('❌ Ошибка создания рекуррентной подписки в боте:', error);
-          responseText = `❌ *Ошибка создания рекуррентной подписки*
+          responseText = `❌ *Ошибка создания подписки*
 
-Попробуйте позже или обратитесь в поддержку.
+Попробуйте позже.
 
 *Детали ошибки:* ${error.message}`;
           
@@ -1259,6 +1208,7 @@ bot.on('callback_query', async (query) => {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [
+                [{ text: '🔄 Попробовать снова', callback_data: 'get_recurring_subscription' }],
                 [{ text: '👨‍💼 Связаться с админом', url: 'https://t.me/johnyestet' }],
                 [{ text: '🔙 Назад', callback_data: 'main_menu' }]
               ]
@@ -1268,19 +1218,104 @@ bot.on('callback_query', async (query) => {
       }
     }
     
+    // Обработка отмены рекуррентной подписки
+    if (data === 'cancel_recurring') {
+      const subscriptionInfo = await getSubscriptionInfo(user.id);
+      
+      if (subscriptionInfo.hasRecurring) {
+        responseText = `🚫 *Отмена автоплатежей*
+
+Вы уверены, что хотите отменить автоплатежи?
+
+⚠️ *Внимание:*
+• Автоматическое продление подписки будет отключено
+• Текущая подписка останется активной до окончания срока
+• Автоплатежи можно будет возобновить позже
+
+Подтвердите отмену автоплатежей:`;
+        
+        options = {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Да, отменить автоплатежи', callback_data: 'confirm_cancel_recurring' }],
+              [{ text: '❌ Нет, оставить автоплатежи', callback_data: 'subscription_management' }]
+            ]
+          }
+        };
+      } else {
+        responseText = `❌ *Автоплатежи не активны*
+
+У вас нет активных автоплатежей для отмены.`;
+        
+        options = {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💳 Оформить рекуррентную подписку', callback_data: 'get_recurring_subscription' }],
+              [{ text: '🔙 Назад', callback_data: 'main_menu' }]
+            ]
+          }
+        };
+      }
+    }
+    
+    // Подтверждение отмены автоплатежей
+    if (data === 'confirm_cancel_recurring') {
+      const cancelled = await cancelUserSubscription(user.id);
+      
+      if (cancelled) {
+        responseText = `✅ *Автоплатежи отменены*
+
+Автоматическое продление подписки отключено.
+
+• Текущая подписка остается активной до окончания срока
+• Автоплатежи больше не будут списываться
+• Вы можете возобновить автоплатежи в любое время
+• Спасибо за то, что были с нами!`;
+        
+        const recurringConfig = getRecurringConfig();
+        
+        options = {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: `🔄 Возобновить автоплатежи`, callback_data: 'get_recurring_subscription' }],
+              [{ text: '🏠 Главное меню', callback_data: 'main_menu' }]
+            ]
+          }
+        };
+      } else {
+        responseText = `❌ *Ошибка отмены*
+
+Не удалось отменить автоплатежи. Попробуйте позже или обратитесь к администратору.`;
+        
+        options = {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '👨‍💼 Связаться с админом', url: 'https://t.me/johnyestet' }],
+              [{ text: '🔙 Назад', callback_data: 'subscription_management' }]
+            ]
+          }
+        };
+      }
+    }
+    
     // Остальные обработчики кнопок остаются без изменений...
     switch (data) {
       case 'subscription_management':
       case 'subscription_status': {
         const subscription = await getUserSubscription(user.id);
         const isActive = await isSubscriptionActive(user.id);
-        const paymentMethod = await getPaymentMethodByUserId(user.id);
+        const subscriptionInfo = await getSubscriptionInfo(user.id);
+        const recurringConfig = getRecurringConfig();
         
         if (isActive && subscription) {
           const endDate = new Date(subscription.end_date);
           const daysLeft = Math.ceil((endDate - new Date()) / (1000 * 60 * 60 * 24));
           
-          responseText = `📊 *Управление рекуррентной подпиской*
+          responseText = `📊 *Управление подпиской*
 
 ✅ *Статус:* Активна
 💳 *Тип:* Рекуррентная подписка
@@ -1288,115 +1323,41 @@ bot.on('callback_query', async (query) => {
 ⏰ *Осталось дней:* ${daysLeft}
 💰 *Сумма:* ${subscription.amount}₽
 
-🔄 *Автоплатежи:* ${paymentMethod?.auto_payments_enabled ? 'Включены' : 'Отключены'}
-⚡ *Интервал:* каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
+🔄 *Автоплатежи:* ${subscriptionInfo.hasRecurring ? 'включены' : 'отключены'}
+💰 *Сумма автоплатежа:* ${recurringConfig.recurringAmount}₽
+⏱ *Интервал:* каждые ${recurringConfig.intervalMinutes} минут
 
-Вы можете отменить автоплатежи в любой момент.`;
+Вы можете управлять автоплатежами.`;
+          
+          const buttons = [
+            [{ text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }]
+          ];
+          
+          if (subscriptionInfo.hasRecurring) {
+            buttons.push([{ text: '🚫 Отменить автоплатежи', callback_data: 'cancel_recurring' }]);
+          } else {
+            buttons.push([{ text: '🔄 Возобновить автоплатежи', callback_data: 'get_recurring_subscription' }]);
+          }
+          
+          buttons.push([{ text: '🔙 Назад', callback_data: 'main_menu' }]);
           
           options = {
             parse_mode: 'Markdown',
             reply_markup: {
-              inline_keyboard: [
-                [{ text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }],
-                [{ text: '🚫 Отменить автоплатежи', callback_data: 'cancel_subscription' }],
-                [{ text: '🔙 Назад', callback_data: 'main_menu' }]
-              ]
+              inline_keyboard: buttons
             }
           };
         } else {
-          responseText = `❌ *Рекуррентная подписка неактивна*
+          responseText = `❌ *Подписка неактивна*
 
-У вас нет активной рекуррентной подписки на канал.`;
+У вас нет активной подписки на канал.`;
           
           options = {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [
-                [{ text: `💳 Рекуррентная подписка (${recurringConfig.initialAmount}₽)`, callback_data: 'get_recurring_subscription' }],
+                [{ text: `💳 Рекуррентная подписка ${recurringConfig.initialAmount}₽`, callback_data: 'get_recurring_subscription' }],
                 [{ text: '🔙 Назад', callback_data: 'main_menu' }]
-              ]
-            }
-          };
-        }
-        break;
-      }
-
-      case 'cancel_subscription': {
-        const isActive = await isSubscriptionActive(user.id);
-        
-        if (isActive) {
-          responseText = `🚫 *Отмена рекуррентной подписки*
-
-Вы уверены, что хотите отменить автоплатежи?
-
-⚠️ *Внимание:*
-• Автоплатежи будут остановлены
-• Текущая подписка будет действовать до окончания периода
-• После окончания доступ к каналу будет закрыт
-• Подписку можно будет оформить заново
-
-Подтвердите отмену автоплатежей:`;
-          
-          options = {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '✅ Да, отменить автоплатежи', callback_data: 'confirm_cancel_subscription' }],
-                [{ text: '❌ Нет, оставить подписку', callback_data: 'subscription_management' }]
-              ]
-            }
-          };
-        } else {
-          responseText = `❌ *Нет активной подписки*
-
-У вас нет активной рекуррентной подписки для отмены.`;
-          
-          options = {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: `💳 Рекуррентная подписка (${recurringConfig.initialAmount}₽)`, callback_data: 'get_recurring_subscription' }],
-                [{ text: '🔙 Назад', callback_data: 'main_menu' }]
-              ]
-            }
-          };
-        }
-        break;
-      }
-
-      case 'confirm_cancel_subscription': {
-        const cancelled = await cancelUserSubscription(user.id);
-        
-        if (cancelled) {
-          responseText = `✅ *Автоплатежи отменены*
-
-Ваши автоплатежи успешно отменены.
-
-• Текущая подписка будет действовать до окончания периода
-• Новые списания не будут производиться
-• Вы можете оформить новую подписку в любое время
-• Спасибо за то, что были с нами!`;
-          
-          options = {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: `💳 Рекуррентная подписка (${recurringConfig.initialAmount}₽)`, callback_data: 'get_recurring_subscription' }],
-                [{ text: '🏠 Главное меню', callback_data: 'main_menu' }]
-              ]
-            }
-          };
-        } else {
-          responseText = `❌ *Ошибка отмены*
-
-Не удалось отменить автоплатежи. Попробуйте позже или обратитесь к администратору.`;
-          
-          options = {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '👨‍💼 Связаться с админом', url: 'https://t.me/johnyestet' }],
-                [{ text: '🔙 Назад', callback_data: 'subscription_management' }]
               ]
             }
           };
@@ -1405,6 +1366,7 @@ bot.on('callback_query', async (query) => {
       }
 
       case 'about_channel':
+        const recurringConfig = getRecurringConfig();
         responseText = `📋 *Подробнее о канале*
 
 *Первый Панч* - это тренажерный клуб по юмору. Если ты хочешь научиться уверенно шутить и легко справляться с неловкими ситуациями - ты по адресу.
@@ -1423,8 +1385,10 @@ bot.on('callback_query', async (query) => {
 
 🏆 *А также ежедневный конкурс шуток!* Лучшая забирает 1000 рублей. Просто за хороший панч. В конце месяца супер приз. Победитель получает 100 000 рублей!
 
-💰 *Рекуррентная подписка: ${recurringConfig.initialAmount}₽ + автоплатежи ${recurringConfig.recurringAmount}₽ каждые ${recurringConfig.intervalMinutes} минут*
-🔄 *Автоматическое продление - никаких перерывов в доступе*
+💰 *Рекуррентная подписка:*
+• Стартовый платеж: ${recurringConfig.initialAmount}₽
+• Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
+🔄 *Автоматическое продление*
 
 🚀 *Попадая в Первый Панч ты:*
 • Начинаешь понимать механику юмора
@@ -1434,13 +1398,13 @@ bot.on('callback_query', async (query) => {
 
 Это полезно и в работе, и в творчестве, и просто в жизни.
 
-👇 *Оформить рекуррентную подписку*`;
+👇 *Оформить подписку*`;
         
         options = {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: `💳 Рекуррентная подписка (${recurringConfig.initialAmount}₽)`, callback_data: 'get_recurring_subscription' }],
+              [{ text: `💳 Рекуррентная подписка ${recurringConfig.initialAmount}₽`, callback_data: 'get_recurring_subscription' }],
               [{ text: '🔙 Назад', callback_data: 'main_menu' }]
             ]
           }
@@ -1469,6 +1433,7 @@ bot.on('callback_query', async (query) => {
         
       case 'main_menu': {
         const subscriptionInfo = await getSubscriptionInfo(user.id);
+        const recurringConfig = getRecurringConfig();
         
         let subscriptionText = '';
         let mainButtons = [];
@@ -1481,15 +1446,19 @@ bot.on('callback_query', async (query) => {
 💳 Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
 📅 Действует до: ${endDate.toLocaleDateString('ru-RU')}
 ⏰ Осталось дней: ${daysLeft}
-🔄 Автоматическое продление включено`;
+🔄 Автоматическое продление: ${subscriptionInfo.hasRecurring ? 'включено' : 'отключено'}`;
           
           mainButtons = [
             [{ text: '📊 Управление подпиской', callback_data: 'subscription_management' }],
             [{ text: '🚀 Вступить в канал', url: 'https://t.me/+SQUu4rWliGo5ZjRi' }]
           ];
+          
+          if (subscriptionInfo.hasRecurring) {
+            mainButtons.push([{ text: '🚫 Отменить автоплатежи', callback_data: 'cancel_recurring' }]);
+          }
         } else {
           mainButtons = [
-            [{ text: `💳 Рекуррентная подписка (${recurringConfig.initialAmount}₽)`, callback_data: 'get_recurring_subscription' }]
+            [{ text: `💳 Рекуррентная подписка ${recurringConfig.initialAmount}₽`, callback_data: 'get_recurring_subscription' }]
           ];
         }
         
@@ -1500,8 +1469,10 @@ bot.on('callback_query', async (query) => {
 ✨ Становиться увереннее  
 ✨ Находить единомышленников
 
-💰 *Рекуррентная подписка: ${recurringConfig.initialAmount}₽ + автоплатежи ${recurringConfig.recurringAmount}₽ каждые ${recurringConfig.intervalMinutes} минут*
-🔄 *Автоматическое продление - никаких перерывов*${subscriptionText}
+💰 *Рекуррентная подписка:*
+• Стартовый платеж: ${recurringConfig.initialAmount}₽
+• Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽
+🔄 *Автоматическое продление*${subscriptionText}
 
 👇 *Выберите действие* 👇`;
 
@@ -1576,7 +1547,6 @@ app.use('*', (req, res) => {
 
 // Запуск сервера
 app.listen(PORT, '0.0.0.0', () => {
-  const recurringConfig = getRecurringConfig();
   console.log('🚀 =================================');
   console.log(`🌐 API сервер запущен на порту ${PORT}`);
   console.log(`🤖 Бот "Первый Панч" работает`);
@@ -1585,8 +1555,11 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`💳 ЮKassa webhook: /api/yukassa-webhook`);
   console.log(`🗄️ База данных: Supabase PostgreSQL`);
   console.log(`💰 Платежная система: ЮKassa (рекуррентные платежи)`);
-  console.log(`🔄 Автоплатежи: каждые ${recurringConfig.intervalMinutes} минут по ${recurringConfig.recurringAmount}₽`);
+  console.log(`🔄 Автоплатежи: каждые ${getRecurringConfig().intervalMinutes} минут по ${getRecurringConfig().recurringAmount}₽`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'production'}`);
   console.log(`🔗 URL: https://telegram-bot-first-punch.onrender.com`);
   console.log('🚀 =================================');
+  
+  // Запускаем первую проверку автоплатежей через 1 минуту после старта
+  setTimeout(processAutoPayments, 60000);
 });
