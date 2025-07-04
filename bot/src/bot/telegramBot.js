@@ -561,9 +561,10 @@ export class TelegramBotService {
         console.log(`🚫 Пользователь ${userId} не имеет активной подписки (статус: ${user?.status || 'не найден'}), удаляем из канала`);
         
         try {
-          // Используем kickChatMember для удаления
-          await this.bot.kickChatMember(chatId, userId);
-          console.log(`✅ Пользователь ${userId} удален из канала`);
+          // Используем banChatMember вместо kickChatMember
+          console.log(`🚫 Пытаемся забанить пользователя ${userId}...`);
+          await this.bot.banChatMember(chatId, userId);
+          console.log(`✅ Пользователь ${userId} забанен`);
           
           // Сразу разбаниваем, чтобы мог подать запрос снова
           setTimeout(async () => {
@@ -602,16 +603,25 @@ ${user ? '💳 Продлите подписку: /subscribe' : '🤖 Зарег
             console.log(`⚠️ Не удалось отправить уведомление пользователю ${userId}:`, dmError.message);
           }
           
-        } catch (kickError) {
-          console.error(`❌ Ошибка при удалении пользователя ${userId} из канала:`, kickError);
+        } catch (banError) {
+          console.error(`❌ Ошибка при бане пользователя ${userId}:`, banError);
           
-          // Если не удалось удалить через kickChatMember, пробуем banChatMember
+          // Если banChatMember не работает, пробуем restrictChatMember
           try {
-            await this.bot.banChatMember(chatId, userId);
-            await this.bot.unbanChatMember(chatId, userId);
-            console.log(`✅ Пользователь ${userId} удален через ban/unban`);
-          } catch (banError) {
-            console.error(`❌ Ошибка при ban/unban пользователя ${userId}:`, banError);
+            console.log(`🔄 Пытаемся ограничить пользователя ${userId}...`);
+            await this.bot.restrictChatMember(chatId, userId, {
+              can_send_messages: false,
+              can_send_media_messages: false,
+              can_send_polls: false,
+              can_send_other_messages: false,
+              can_add_web_page_previews: false,
+              can_change_info: false,
+              can_invite_users: false,
+              can_pin_messages: false
+            });
+            console.log(`✅ Пользователь ${userId} ограничен в правах`);
+          } catch (restrictError) {
+            console.error(`❌ Ошибка при ограничении пользователя ${userId}:`, restrictError);
           }
         }
       } else {
