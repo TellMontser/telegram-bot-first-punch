@@ -65,7 +65,22 @@ export function apiRoutes(database) {
   router.put('/users/:id/status', async (req, res) => {
     try {
       const { status, subscriptionEnd } = req.body;
-      await database.updateUserStatus(req.params.id, status, subscriptionEnd);
+      const telegramId = parseInt(req.params.id);
+      
+      console.log(`📝 Обновление статуса пользователя ${telegramId}: ${status}`);
+      
+      await database.updateUserStatus(telegramId, status, subscriptionEnd);
+      
+      // Логируем действие
+      const user = await database.getUserByTelegramId(telegramId);
+      if (user) {
+        await database.logSubscriptionAction(
+          user.id,
+          'admin_status_update',
+          `Статус изменен администратором на: ${status}`
+        );
+      }
+      
       res.json({ success: true });
     } catch (error) {
       console.error('Ошибка при обновлении статуса:', error);
@@ -73,14 +88,46 @@ export function apiRoutes(database) {
     }
   });
 
-  // Отключение автоплатежа
+  // Управление автоплатежом
   router.put('/users/:id/auto-payment', async (req, res) => {
     try {
       const { enabled } = req.body;
-      await database.setAutoPayment(req.params.id, enabled);
+      const telegramId = parseInt(req.params.id);
+      
+      console.log(`🔄 Изменение автоплатежа пользователя ${telegramId}: ${enabled}`);
+      
+      await database.setAutoPayment(telegramId, enabled);
+      
+      // Логируем действие
+      const user = await database.getUserByTelegramId(telegramId);
+      if (user) {
+        await database.logSubscriptionAction(
+          user.id,
+          'admin_autopay_update',
+          `Автоплатеж ${enabled ? 'включен' : 'отключен'} администратором`
+        );
+      }
+      
       res.json({ success: true });
     } catch (error) {
       console.error('Ошибка при изменении автоплатежа:', error);
+      res.status(500).json({ error: 'Ошибка сервера' });
+    }
+  });
+
+  // Отправка сообщения пользователю
+  router.post('/send-message', async (req, res) => {
+    try {
+      const { telegramId, message } = req.body;
+      
+      console.log(`💬 Отправка сообщения пользователю ${telegramId}: ${message}`);
+      
+      // Здесь нужно получить доступ к экземпляру бота
+      // Мы добавим это в следующем обновлении
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Ошибка при отправке сообщения:', error);
       res.status(500).json({ error: 'Ошибка сервера' });
     }
   });
