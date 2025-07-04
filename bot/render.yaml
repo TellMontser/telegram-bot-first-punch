@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: telegram-bot-yookassa
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BOT_TOKEN
+        sync: false
+      - key: YUKASSA_SHOP_ID
+        value: "1103466"
+      - key: YUKASSA_SECRET_KEY
+        sync: false
+      - key: YUKASSA_API_URL
+        value: "https://api.yookassa.ru/v3"
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
