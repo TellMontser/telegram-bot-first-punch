@@ -5,47 +5,79 @@ export class TelegramBotService {
     this.database = database;
     this.yookassaService = yookassaService;
     this.paymentScheduler = paymentScheduler;
-    this.bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
+    
+    // Проверяем наличие токена
+    const botToken = process.env.BOT_TOKEN;
+    if (!botToken) {
+      throw new Error('BOT_TOKEN не найден в переменных среды');
+    }
+    
+    console.log('Инициализация бота с токеном:', botToken.substring(0, 10) + '...');
+    
+    this.bot = new TelegramBot(botToken, { polling: false });
     this.isStarted = false;
   }
 
   async start() {
     if (this.isStarted) return;
     
-    this.setupCommands();
-    this.setupCallbacks();
-    
-    if (process.env.WEBHOOK_URL) {
-      await this.bot.setWebHook(`${process.env.WEBHOOK_URL}/webhook/telegram`);
-      console.log('Webhook установлен');
-    } else {
-      await this.bot.startPolling();
-      console.log('Polling запущен');
+    try {
+      // Сначала проверим, что бот работает
+      const me = await this.bot.getMe();
+      console.log('Бот успешно авторизован:', me.username);
+      
+      this.setupCommands();
+      this.setupCallbacks();
+      
+      if (process.env.WEBHOOK_URL) {
+        const webhookUrl = `${process.env.WEBHOOK_URL}/webhook/telegram`;
+        console.log('Устанавливаем webhook:', webhookUrl);
+        
+        // Сначала удаляем старый webhook
+        await this.bot.deleteWebHook();
+        console.log('Старый webhook удален');
+        
+        // Устанавливаем новый webhook
+        const result = await this.bot.setWebHook(webhookUrl);
+        console.log('Webhook установлен:', result);
+      } else {
+        console.log('WEBHOOK_URL не найден, запускаем polling');
+        await this.bot.startPolling();
+        console.log('Polling запущен');
+      }
+      
+      this.isStarted = true;
+      console.log('Telegram бот успешно запущен');
+    } catch (error) {
+      console.error('Ошибка при запуске Telegram бота:', error);
+      throw error;
     }
-    
-    this.isStarted = true;
-    console.log('Telegram бот запущен');
   }
 
   async stop() {
     if (!this.isStarted) return;
     
-    await this.bot.stopPolling();
-    this.isStarted = false;
-    console.log('Telegram бот остановлен');
+    try {
+      await this.bot.stopPolling();
+      this.isStarted = false;
+      console.log('Telegram бот остановлен');
+    } catch (error) {
+      console.error('Ошибка при остановке бота:', error);
+    }
   }
 
   setupCommands() {
     this.bot.onText(/\/start/, async (msg) => {
       const chatId = msg.chat.id;
-      const user = await this.database.createUser(
-        chatId,
-        msg.from.username,
-        msg.from.first_name,
-        msg.from.last_name
-      );
+      try {
+        const user = await this.database.createUser(
+          chatId,
+          msg.from.username,
+          msg.from.first_name,
+          msg.from.last_name
+        );
 
-      const welcomeMessage = `
+        const welcomeMessage = `
 🎉 Добро пожаловать в наш бот!
 
 👤 Ваш статус: ${user.status === 'active' ? 'Активный' : 'Неактивный'}
@@ -55,16 +87,20 @@ export class TelegramBotService {
 /status - Проверить статус подписки
 /cancel - Отменить автоплатеж
 /help - Помощь
-      `;
+        `;
 
-      await this.bot.sendMessage(chatId, welcomeMessage, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '💳 Оформить подписку', callback_data: 'subscribe' }],
-            [{ text: '📊 Мой статус', callback_data: 'status' }]
-          ]
-        }
-      });
+        await this.bot.sendMessage(chatId, welcomeMessage, {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💳 Оформить подписку', callback_data: 'subscribe' }],
+              [{ text: '📊 Мой статус', callback_data: 'status' }]
+            ]
+          }
+        });
+      } catch (error) {
+        console.error('Ошибка в команде /start:', error);
+        await this.bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте позже.');
+      }
     });
 
     this.bot.onText(/\/subscribe/, async (msg) => {
@@ -104,18 +140,22 @@ export class TelegramBotService {
       const chatId = callbackQuery.message.chat.id;
       const data = callbackQuery.data;
 
-      await this.bot.answerCallbackQuery(callbackQuery.id);
+      try {
+        await this.bot.answerCallbackQuery(callbackQuery.id);
 
-      switch (data) {
-        case 'subscribe':
-          await this.handleSubscribe(chatId);
-          break;
-        case 'status':
-          await this.handleStatus(chatId);
-          break;
-        case 'cancel_auto':
-          await this.handleCancelAutoPayment(chatId);
-          break;
+        switch (data) {
+          case 'subscribe':
+            await this.handleSubscribe(chatId);
+            break;
+          case 'status':
+            await this.handleStatus(chatId);
+            break;
+          case 'cancel_auto':
+            await this.handleCancelAutoPayment(chatId);
+            break;
+        }
+      } catch (error) {
+        console.error('Ошибка в callback query:', error);
       }
     });
   }
@@ -256,6 +296,7 @@ export class TelegramBotService {
   async processWebhook(req, res) {
     try {
       const update = req.body;
+      console.log('Получен webhook от Telegram:', JSON.stringify(update, null, 2));
       await this.bot.processUpdate(update);
       res.status(200).send('OK');
     } catch (error) {
