@@ -310,18 +310,72 @@ export class Database {
     try {
       console.log(`📝 Создаем запрос на вступление в канал для пользователя ${userId}`);
       
-      // Используем новую функцию для безопасного upsert
+      // Используем прямую вставку вместо функции
       const { data, error } = await this.supabase
-        .rpc('upsert_channel_request', {
-          p_user_id: userId,
-          p_username: username,
-          p_first_name: firstName,
-          p_last_name: lastName
-        });
+        .from('channel_requests')
+        .upsert({
+          user_id: userId,
+          username: username || null,
+          first_name: firstName || null,
+          last_name: lastName || null,
+          status: 'pending',
+          request_date: new Date().toISOString()
+        }, {
+          onConflict: 'user_id',
+          ignoreDuplicates: false
+        })
+        .select()
+        .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Ошибка при upsert, пробуем обычную вставку:', error);
+        
+        // Если upsert не работает, пробуем обычную вставку
+        const { data: insertData, error: insertError } = await this.supabase
+          .from('channel_requests')
+          .insert({
+            user_id: userId,
+            username: username || null,
+            first_name: firstName || null,
+            last_name: lastName || null,
+            status: 'pending',
+            request_date: new Date().toISOString()
+          })
+          .select()
+          .single();
 
-      console.log(`✅ Запрос на вступление создан для пользователя ${userId}`);
+        if (insertError) {
+          // Если вставка не удалась из-за дублирования, обновляем существующую запись
+          if (insertError.code === '23505') {
+            console.log('Запись уже существует, обновляем...');
+            const { data: updateData, error: updateError } = await this.supabase
+              .from('channel_requests')
+              .update({
+                username: username || null,
+                first_name: firstName || null,
+                last_name: lastName || null,
+                status: 'pending',
+                request_date: new Date().toISOString(),
+                processed_date: null,
+                processed_by: null
+              })
+              .eq('user_id', userId)
+              .select()
+              .single();
+
+            if (updateError) throw updateError;
+            console.log(`✅ Запрос на вступление обновлен для пользователя ${userId}`);
+            return updateData;
+          } else {
+            throw insertError;
+          }
+        }
+
+        console.log(`✅ Запрос на вступление создан для пользователя ${userId}`);
+        return insertData;
+      }
+
+      console.log(`✅ Запрос на вступление создан/обновлен для пользователя ${userId}`);
       return data;
     } catch (error) {
       console.error('Ошибка создания запроса на вступление:', error);
@@ -500,19 +554,73 @@ export class Database {
     try {
       console.log(`👥 Обновляем информацию об участнике ${userId} в кэше`);
       
+      // Используем прямую вставку вместо функции
       const { data, error } = await this.supabase
-        .rpc('upsert_channel_member', {
-          p_user_id: userId,
-          p_username: username,
-          p_first_name: firstName,
-          p_last_name: lastName,
-          p_status: status,
-          p_is_bot: isBot
-        });
+        .from('channel_members_cache')
+        .upsert({
+          user_id: userId,
+          username: username || null,
+          first_name: firstName || null,
+          last_name: lastName || null,
+          status: status,
+          is_bot: isBot,
+          last_seen: new Date().toISOString()
+        }, {
+          onConflict: 'user_id',
+          ignoreDuplicates: false
+        })
+        .select()
+        .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Ошибка при upsert участника, пробуем обычную вставку:', error);
+        
+        // Если upsert не работает, пробуем обычную вставку
+        const { data: insertData, error: insertError } = await this.supabase
+          .from('channel_members_cache')
+          .insert({
+            user_id: userId,
+            username: username || null,
+            first_name: firstName || null,
+            last_name: lastName || null,
+            status: status,
+            is_bot: isBot,
+            last_seen: new Date().toISOString()
+          })
+          .select()
+          .single();
 
-      console.log(`✅ Информация об участнике ${userId} обновлена`);
+        if (insertError) {
+          // Если вставка не удалась из-за дублирования, обновляем существующую запись
+          if (insertError.code === '23505') {
+            console.log('Участник уже существует, обновляем...');
+            const { data: updateData, error: updateError } = await this.supabase
+              .from('channel_members_cache')
+              .update({
+                username: username || null,
+                first_name: firstName || null,
+                last_name: lastName || null,
+                status: status,
+                is_bot: isBot,
+                last_seen: new Date().toISOString()
+              })
+              .eq('user_id', userId)
+              .select()
+              .single();
+
+            if (updateError) throw updateError;
+            console.log(`✅ Информация об участнике ${userId} обновлена`);
+            return updateData;
+          } else {
+            throw insertError;
+          }
+        }
+
+        console.log(`✅ Информация об участнике ${userId} создана`);
+        return insertData;
+      }
+
+      console.log(`✅ Информация об участнике ${userId} создана/обновлена`);
       return data;
     } catch (error) {
       console.error('Ошибка обновления участника канала:', error);
