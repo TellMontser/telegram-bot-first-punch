@@ -1,4 +1,26 @@
 import express from 'express';
+import multer from 'multer';
+import path from 'path';
+
+// Настройка multer для загрузки файлов
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|mp4|mov|avi|webm/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Неподдерживаемый тип файла'));
+    }
+  }
+});
 
 export function apiRoutes(database, telegramBot) {
   const router = express.Router();
@@ -188,6 +210,92 @@ export function apiRoutes(database, telegramBot) {
       res.json({ success: true, message: 'Сообщение отправлено' });
     } catch (error) {
       console.error('❌ API: Ошибка при отправке сообщения:', error);
+      res.status(500).json({ error: 'Ошибка сервера', details: error.message });
+    }
+  });
+
+  // Отправка рассылки с медиа и кнопками
+  router.post('/send-broadcast', upload.single('media_file'), async (req, res) => {
+    try {
+      const { telegramId, text, parse_mode, buttons, media_type } = req.body;
+      const mediaFile = req.file;
+      
+      console.log(`📢 API: Отправка рассылки пользователю ${telegramId}`);
+      
+      if (!telegramBot || !telegramBot.bot) {
+        console.error('❌ API: Telegram бот недоступен');
+        return res.status(503).json({ error: 'Telegram бот недоступен' });
+      }
+
+      // Подготавливаем опции сообщения
+      const messageOptions = {
+        parse_mode: parse_mode !== 'None' ? parse_mode : undefined,
+        reply_markup: undefined
+      };
+
+      // Добавляем кнопки если есть
+      if (buttons) {
+        try {
+          const parsedButtons = JSON.parse(buttons);
+          if (parsedButtons.length > 0) {
+            const inlineKeyboard = parsedButtons.map(row => 
+              row.map(button => ({
+                text: button.text,
+                ...(button.url ? { url: button.url } : { callback_data: button.callback_data || button.text })
+              }))
+            );
+            messageOptions.reply_markup = { inline_keyboard: inlineKeyboard };
+          }
+        } catch (error) {
+          console.warn('⚠️ Ошибка парсинга кнопок:', error);
+        }
+      }
+
+      // Отправляем сообщение с медиа или без
+      if (mediaFile && media_type) {
+        const mediaBuffer = mediaFile.buffer;
+        
+        switch (media_type) {
+          case 'photo':
+            await telegramBot.bot.sendPhoto(telegramId, mediaBuffer, {
+              caption: text,
+              ...messageOptions
+            });
+            break;
+          case 'video':
+            await telegramBot.bot.sendVideo(telegramId, mediaBuffer, {
+              caption: text,
+              ...messageOptions
+            });
+            break;
+          case 'video_note':
+            await telegramBot.bot.sendVideoNote(telegramId, mediaBuffer);
+            if (text) {
+              await telegramBot.bot.sendMessage(telegramId, text, messageOptions);
+            }
+            break;
+          default:
+            throw new Error(`Неподдерживаемый тип медиа: ${media_type}`);
+        }
+      } else {
+        // Отправляем только текстовое сообщение
+        await telegramBot.bot.sendMessage(telegramId, text, messageOptions);
+      }
+      
+      // Логируем действие
+      const user = await database.getUserByTelegramId(telegramId);
+      if (user) {
+        await database.logSubscriptionAction(
+          user.id,
+          'admin_broadcast_sent',
+          `Администратор отправил рассылку: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`
+        );
+      }
+      
+      console.log(`✅ API: Рассылка пользователю ${telegramId} отправлена`);
+      res.json({ success: true, message: 'Рассылка отправлена' });
+    } catch (error) {
+      console.error('❌ API: Ошибка при отправке рассылки:', error);
       res.status(500).json({ error: 'Ошибка сервера', details: error.message });
     }
   });
