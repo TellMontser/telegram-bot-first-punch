@@ -1,6 +1,6 @@
 import express from 'express';
 
-export function apiRoutes(database) {
+export function apiRoutes(database, telegramBot) {
   const router = express.Router();
 
   // Получение статистики
@@ -94,6 +94,20 @@ export function apiRoutes(database) {
           `Статус изменен администратором на: ${status}`
         );
       }
+
+      // Отправляем уведомление пользователю
+      if (telegramBot && telegramBot.bot) {
+        try {
+          const message = status === 'active' 
+            ? '✅ Ваша подписка активирована администратором!'
+            : '❌ Ваша подписка деактивирована администратором.';
+          
+          await telegramBot.bot.sendMessage(telegramId, message);
+          console.log(`📤 API: Уведомление отправлено пользователю ${telegramId}`);
+        } catch (botError) {
+          console.warn(`⚠️ API: Не удалось отправить уведомление пользователю ${telegramId}:`, botError);
+        }
+      }
       
       console.log(`✅ API: Статус пользователя ${telegramId} обновлен`);
       res.json({ success: true, message: 'Статус обновлен' });
@@ -122,6 +136,20 @@ export function apiRoutes(database) {
           `Автоплатеж ${enabled ? 'включен' : 'отключен'} администратором`
         );
       }
+
+      // Отправляем уведомление пользователю
+      if (telegramBot && telegramBot.bot) {
+        try {
+          const message = enabled 
+            ? '🔄 Автоплатеж включен администратором.'
+            : '⏹️ Автоплатеж отключен администратором.';
+          
+          await telegramBot.bot.sendMessage(telegramId, message);
+          console.log(`📤 API: Уведомление об автоплатеже отправлено пользователю ${telegramId}`);
+        } catch (botError) {
+          console.warn(`⚠️ API: Не удалось отправить уведомление об автоплатеже пользователю ${telegramId}:`, botError);
+        }
+      }
       
       console.log(`✅ API: Автоплатеж пользователя ${telegramId} обновлен`);
       res.json({ success: true, message: 'Автоплатеж обновлен' });
@@ -138,9 +166,13 @@ export function apiRoutes(database) {
       
       console.log(`💬 API: Отправка сообщения пользователю ${telegramId}: ${message}`);
       
-      // Здесь нужно получить доступ к экземпляру бота
-      // Пока что просто логируем
-      console.log(`📤 API: Сообщение для ${telegramId}: ${message}`);
+      if (!telegramBot || !telegramBot.bot) {
+        console.error('❌ API: Telegram бот недоступен');
+        return res.status(503).json({ error: 'Telegram бот недоступен' });
+      }
+
+      // Отправляем сообщение через бота
+      await telegramBot.bot.sendMessage(telegramId, message);
       
       // Логируем действие
       const user = await database.getUserByTelegramId(telegramId);
