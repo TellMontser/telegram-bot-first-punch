@@ -255,21 +255,27 @@ export function apiRoutes(database, telegramBot) {
       if (mediaFile && media_type) {
         const mediaBuffer = mediaFile.buffer;
         
+        // Подготавливаем fileOptions для корректной отправки медиа
+        const fileOptions = {
+          filename: mediaFile.originalname,
+          contentType: mediaFile.mimetype
+        };
+        
         switch (media_type) {
           case 'photo':
             await telegramBot.bot.sendPhoto(telegramId, mediaBuffer, {
               caption: text,
               ...messageOptions
-            });
+            }, fileOptions);
             break;
           case 'video':
             await telegramBot.bot.sendVideo(telegramId, mediaBuffer, {
               caption: text,
               ...messageOptions
-            });
+            }, fileOptions);
             break;
           case 'video_note':
-            await telegramBot.bot.sendVideoNote(telegramId, mediaBuffer);
+            await telegramBot.bot.sendVideoNote(telegramId, mediaBuffer, {}, fileOptions);
             if (text) {
               await telegramBot.bot.sendMessage(telegramId, text, messageOptions);
             }
