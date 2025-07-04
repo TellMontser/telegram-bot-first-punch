@@ -378,6 +378,43 @@ export function apiRoutes(database, telegramBot) {
     }
   });
 
+  // Кик пользователя из канала
+  router.post('/channel/kick-user', async (req, res) => {
+    try {
+      const { userId } = req.body;
+      console.log(`🚫 API: Кик пользователя ${userId} из канала`);
+      
+      if (!telegramBot) {
+        return res.status(503).json({ error: 'Telegram бот недоступен' });
+      }
+
+      // Кикаем пользователя из канала
+      await telegramBot.checkAndManageChannelMember(telegramBot.PRIVATE_CHANNEL_ID, userId);
+      
+      // Обновляем статус запроса на "kicked" если есть
+      const request = await database.getChannelRequestByUserId(userId);
+      if (request) {
+        await database.updateChannelRequestStatus(request.id, 'kicked', 'admin_panel');
+      }
+      
+      // Логируем действие
+      const user = await database.getUserByTelegramId(userId);
+      if (user) {
+        await database.logSubscriptionAction(
+          user.id,
+          'channel_kicked_manual',
+          'Пользователь кикнут из канала администратором через панель'
+        );
+      }
+      
+      console.log(`✅ API: Пользователь ${userId} кикнут из канала`);
+      res.json({ success: true, message: 'Пользователь кикнут из канала' });
+    } catch (error) {
+      console.error('❌ API: Ошибка при кике пользователя:', error);
+      res.status(500).json({ error: 'Ошибка сервера', details: error.message });
+    }
+  });
+
   // Массовое одобрение запросов
   router.post('/channel/requests/bulk-approve', async (req, res) => {
     try {
@@ -446,79 +483,6 @@ export function apiRoutes(database, telegramBot) {
       });
     } catch (error) {
       console.error('❌ API: Ошибка при массовом отклонении:', error);
-      res.status(500).json({ error: 'Ошибка сервера', details: error.message });
-    }
-  });
-
-  // Удаление незарегистрированных пользователей
-  router.post('/channel/kick-unregistered', async (req, res) => {
-    try {
-      console.log('🚫 API: Удаление незарегистрированных пользователей из канала');
-      
-      if (!telegramBot) {
-        return res.status(503).json({ error: 'Telegram бот недоступен' });
-      }
-
-      // Запускаем аудит канала для удаления незарегистрированных
-      await telegramBot.performChannelAudit();
-      
-      console.log('✅ API: Аудит канала выполнен');
-      res.json({ success: true, message: 'Аудит канала выполнен, незарегистрированные пользователи удалены' });
-    } catch (error) {
-      console.error('❌ API: Ошибка при удалении незарегистрированных:', error);
-      res.status(500).json({ error: 'Ошибка сервера', details: error.message });
-    }
-  });
-
-  // === API ДЛЯ УПРАВЛЕНИЯ УЧАСТНИКАМИ КАНАЛА ===
-
-  // Получение списка участников канала
-  router.get('/channel/members', async (req, res) => {
-    try {
-      console.log('👥 API: Запрос списка участников канала');
-      
-      const members = await database.getChannelMembers();
-      
-      console.log('✅ API: Участники канала получены:', members.length);
-      res.json(members);
-    } catch (error) {
-      console.error('❌ API: Ошибка при получении участников канала:', error);
-      res.status(500).json({ error: 'Ошибка сервера', details: error.message });
-    }
-  });
-
-  // Получение статистики участников канала
-  router.get('/channel/members/stats', async (req, res) => {
-    try {
-      console.log('📊 API: Запрос статистики участников канала');
-      
-      const stats = await database.getChannelMembersStats();
-      
-      console.log('✅ API: Статистика участников получена:', stats);
-      res.json(stats);
-    } catch (error) {
-      console.error('❌ API: Ошибка при получении статистики участников:', error);
-      res.status(500).json({ error: 'Ошибка сервера', details: error.message });
-    }
-  });
-
-  // Синхронизация участников канала с Telegram
-  router.post('/channel/sync-members', async (req, res) => {
-    try {
-      console.log('🔄 API: Синхронизация участников канала с Telegram');
-      
-      if (!telegramBot) {
-        return res.status(503).json({ error: 'Telegram бот недоступен' });
-      }
-
-      // Здесь будет логика синхронизации участников с Telegram API
-      // Пока что просто запускаем аудит
-      await telegramBot.performChannelAudit();
-      
-      console.log('✅ API: Синхронизация участников завершена');
-      res.json({ success: true, message: 'Синхронизация участников завершена' });
-    } catch (error) {
-      console.error('❌ API: Ошибка при синхронизации участников:', error);
       res.status(500).json({ error: 'Ошибка сервера', details: error.message });
     }
   });
