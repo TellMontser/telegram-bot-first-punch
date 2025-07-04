@@ -58,7 +58,7 @@ try {
 
 // Маршруты
 app.use('/webhook', webhookRoutes(telegramBot, yookassaService));
-app.use('/api', apiRoutes(database));
+app.use('/api', apiRoutes(database, telegramBot)); // Передаем telegramBot для отправки сообщений
 
 // Главная страница
 app.get('/', (req, res) => {
