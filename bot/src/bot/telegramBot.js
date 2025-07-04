@@ -7,7 +7,7 @@ export class TelegramBotService {
     this.paymentScheduler = paymentScheduler;
     
     // ID закрытого канала (получите через @userinfobot)
-    this.PRIVATE_CHANNEL_ID = process.env.PRIVATE_CHANNEL_ID || '-1002345678901';
+    this.PRIVATE_CHANNEL_ID = process.env.PRIVATE_CHANNEL_ID || '-1002876590285';
     this.PRIVATE_CHANNEL_LINK = 'https://t.me/+TEw_Ql5PbLIxNmMy';
     
     // Список админов канала (Telegram ID)
