@@ -13,6 +13,26 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Проверяем обязательные переменные среды
+const requiredEnvVars = [
+  'BOT_TOKEN',
+  'SUPABASE_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'YUKASSA_SHOP_ID',
+  'YUKASSA_SECRET_KEY'
+];
+
+console.log('Проверка переменных среды:');
+for (const envVar of requiredEnvVars) {
+  const value = process.env[envVar];
+  if (!value) {
+    console.error(`❌ Переменная среды ${envVar} не найдена`);
+    process.exit(1);
+  } else {
+    console.log(`✅ ${envVar}: ${envVar.includes('TOKEN') || envVar.includes('KEY') ? value.substring(0, 10) + '...' : value}`);
+  }
+}
+
 // Middleware
 app.use(cors({
   origin: '*',
@@ -22,10 +42,19 @@ app.use(cors({
 app.use(express.json());
 
 // Инициализация сервисов
-const database = new Database();
-const yookassaService = new YookassaService();
-const paymentScheduler = new PaymentScheduler(database, yookassaService);
-const telegramBot = new TelegramBotService(database, yookassaService, paymentScheduler);
+let database, yookassaService, paymentScheduler, telegramBot;
+
+try {
+  database = new Database();
+  yookassaService = new YookassaService();
+  paymentScheduler = new PaymentScheduler(database, yookassaService);
+  telegramBot = new TelegramBotService(database, yookassaService, paymentScheduler);
+  
+  console.log('✅ Все сервисы инициализированы');
+} catch (error) {
+  console.error('❌ Ошибка инициализации сервисов:', error);
+  process.exit(1);
+}
 
 // Маршруты
 app.use('/webhook', webhookRoutes(telegramBot, yookassaService));
@@ -36,42 +65,69 @@ app.get('/', (req, res) => {
   res.json({
     status: 'ok',
     message: 'Telegram Bot Server работает',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    bot_token_present: !!process.env.BOT_TOKEN,
+    webhook_url: process.env.WEBHOOK_URL
   });
 });
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    services: {
+      database: !!database,
+      yookassa: !!yookassaService,
+      telegram: !!telegramBot,
+      scheduler: !!paymentScheduler
+    }
+  });
 });
 
 // Запуск сервера
 app.listen(PORT, async () => {
-  console.log(`Сервер запущен на порту ${PORT}`);
+  console.log(`🚀 Сервер запущен на порту ${PORT}`);
   
   try {
     // Инициализация базы данных
     await database.init();
-    console.log('База данных инициализирована');
+    console.log('✅ База данных инициализирована');
     
     // Запуск бота
     await telegramBot.start();
-    console.log('Telegram бот запущен');
+    console.log('✅ Telegram бот запущен');
     
     // Запуск планировщика платежей
     paymentScheduler.start();
-    console.log('Планировщик платежей запущен');
+    console.log('✅ Планировщик платежей запущен');
     
-    console.log('Все сервисы запущены успешно!');
+    console.log('🎉 Все сервисы запущены успешно!');
   } catch (error) {
-    console.error('Ошибка при запуске сервисов:', error);
+    console.error('❌ Ошибка при запуске сервисов:', error);
+    process.exit(1);
   }
 });
 
 // Обработка завершения процесса
 process.on('SIGINT', async () => {
-  console.log('Завершение работы сервера...');
-  await telegramBot.stop();
-  paymentScheduler.stop();
+  console.log('⏹️ Завершение работы сервера...');
+  try {
+    if (telegramBot) await telegramBot.stop();
+    if (paymentScheduler) paymentScheduler.stop();
+    console.log('✅ Все сервисы остановлены');
+  } catch (error) {
+    console.error('❌ Ошибка при остановке сервисов:', error);
+  }
   process.exit(0);
+});
+
+// Обработка необработанных ошибок
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  process.exit(1);
 });
