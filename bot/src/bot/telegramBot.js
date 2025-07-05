@@ -201,12 +201,29 @@ export class TelegramBotService {
       console.log(`📨 Получена команда /start от пользователя ${chatId}`, startParam ? `с параметром: ${startParam}` : '');
       
       try {
-        // Проверяем, есть ли реферальный параметр
-        let referralSource = null;
-        let referralLinkId = null;
+        // Сначала проверяем, существует ли уже пользователь
+        let existingUser = await this.database.getUserByTelegramId(chatId);
+        
+        // Переменные для реферальной системы
+        let referralSource = existingUser?.referral_source || null;
+        let referralLinkId = existingUser?.referral_link_id || null;
         let customAmount = null;
         
-        if (startParam && startParam.startsWith('ref_')) {
+        // Если есть реферальная ссылка, получаем сумму
+        if (referralLinkId) {
+          const { data: referralLink } = await this.database.supabase
+            .from('referral_links')
+            .select('subscription_amount')
+            .eq('id', referralLinkId)
+            .single();
+          
+          if (referralLink) {
+            customAmount = referralLink.subscription_amount;
+          }
+        }
+        
+        // Обрабатываем реферальный параметр только если пользователь новый или еще не имеет реферала
+        if (startParam && startParam.startsWith('ref_') && (!existingUser || !existingUser.referral_source)) {
           console.log(`🔗 Обнаружен реферальный код: ${startParam}`);
           
           // Логируем клик по реферальной ссылке
@@ -229,20 +246,53 @@ export class TelegramBotService {
             referralLinkId = referralLink.id;
             customAmount = referralLink.subscription_amount;
             console.log(`✅ Найдена активная реферальная ссылка: ${referralLink.referrer_name}, сумма: ${customAmount} ₽`);
+            
+            // Если пользователь уже существует, обновляем его реферальную информацию
+            if (existingUser) {
+              await this.database.supabase
+                .from('users')
+                .update({
+                  referral_source: referralSource,
+                  referral_link_id: referralLinkId
+                })
+                .eq('telegram_id', chatId);
+              
+              console.log(`🔄 Обновлена реферальная информация для существующего пользователя ${chatId}`);
+            }
           }
         }
         
-        const user = await this.database.createUser(
-          chatId,
-          msg.from.username,
-          msg.from.first_name,
-          msg.from.last_name,
-          referralSource,
-          referralLinkId
-        );
+        // Создаем или получаем пользователя
+        let user;
+        if (existingUser) {
+          // Обновляем информацию о пользователе (имя, username могли измениться)
+          await this.database.supabase
+            .from('users')
+            .update({
+              username: msg.from.username,
+              first_name: msg.from.first_name,
+              last_name: msg.from.last_name
+            })
+            .eq('telegram_id', chatId);
+          
+          // Получаем обновленного пользователя
+          user = await this.database.getUserByTelegramId(chatId);
+          console.log(`🔄 Обновлена информация существующего пользователя ${chatId}`);
+        } else {
+          // Создаем нового пользователя
+          user = await this.database.createUser(
+            chatId,
+            msg.from.username,
+            msg.from.first_name,
+            msg.from.last_name,
+            referralSource,
+            referralLinkId
+          );
+          console.log(`✅ Создан новый пользователь ${chatId}`);
+        }
         
-        // Если это новый пользователь с реферальным кодом, логируем регистрацию
-        if (referralSource && referralLinkId) {
+        // Если это новый пользователь с реферальным кодом или обновили реферала, логируем регистрацию
+        if (referralSource && referralLinkId && startParam && startParam.startsWith('ref_')) {
           await this.database.supabase.rpc('log_referral_action', {
             p_referral_code: startParam,
             p_telegram_id: chatId,
@@ -251,12 +301,25 @@ export class TelegramBotService {
           
           console.log(`📝 Зарегистрирован новый реферал: ${referralSource}`);
         }
+        
+        // Получаем актуальную сумму для отображения
+        if (user.referral_link_id && !customAmount) {
+          const { data: referralLink } = await this.database.supabase
+            .from('referral_links')
+            .select('subscription_amount')
+            .eq('id', user.referral_link_id)
+            .single();
+          
+          if (referralLink) {
+            customAmount = referralLink.subscription_amount;
+          }
+        }
 
         let welcomeMessage = `
 🎉 Добро пожаловать в наш бот!
 
 👤 Ваш статус: ${user.status === 'active' ? 'Активный' : 'Неактивный'}
-${referralSource ? `\n🔗 Источник: ${referralSource}` : ''}
+${user.referral_source ? `\n🔗 Источник: ${user.referral_source}` : ''}
 ${customAmount ? `\n💰 Специальная цена для вас: ${customAmount} ₽` : ''}
 
 Доступные команды:
