@@ -195,10 +195,7 @@ export class TelegramBotService {
   setupCommands() {
     console.log('⚙️ Настраиваем команды бота...');
     
-    this.bot.onText(/\/start/, async (msg) => {
-      this.bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
-      }
-      )
+    this.bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
       const chatId = msg.chat.id;
       const startParam = match?.[1]; // Параметр после /start
       console.log(`📨 Получена команда /start от пользователя ${chatId}`, startParam ? `с параметром: ${startParam}` : '');
