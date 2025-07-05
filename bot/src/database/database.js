@@ -42,9 +42,16 @@ export class Database {
   }
   async createUser(telegramId, username, firstName, lastName, referralSource = null, referralLinkId = null) {
     try {
+      // Сначала проверяем, существует ли уже пользователь
+      const existingUser = await this.getUserByTelegramId(telegramId);
+      if (existingUser) {
+        console.log(`👤 Пользователь ${telegramId} уже существует, возвращаем существующего`);
+        return existingUser;
+      }
+      
       const { data, error } = await this.supabase
         .from('users')
-        .upsert({
+        .insert({
           telegram_id: telegramId,
           username: username,
           first_name: firstName,
@@ -53,17 +60,24 @@ export class Database {
           referral_link_id: referralLinkId,
           status: 'inactive',
           auto_payment_enabled: false
-        }, {
-          onConflict: 'telegram_id'
         })
         .select()
         .single();
 
       if (error) throw error;
+      console.log(`✅ Создан новый пользователь ${telegramId} с реферальной информацией:`, {
+        referralSource,
+        referralLinkId
+      });
       return data;
     } catch (error) {
       console.error('Ошибка создания пользователя:', error);
-      return await this.getUserByTelegramId(telegramId);
+      // Если ошибка из-за дублирования, возвращаем существующего пользователя
+      if (error.code === '23505') {
+        console.log(`👤 Пользователь ${telegramId} уже существует (дублирование), получаем существующего`);
+        return await this.getUserByTelegramId(telegramId);
+      }
+      throw error;
     }
   }
 
