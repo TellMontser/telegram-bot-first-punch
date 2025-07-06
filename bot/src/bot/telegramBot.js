@@ -198,6 +198,9 @@ export class TelegramBotService {
       console.log(`📨 Получена команда /start от пользователя ${chatId}`, startParam ? `с параметром: ${startParam}` : '');
       
       try {
+        // Удаляем предыдущие сообщения (очистка)
+        await this.clearPreviousMessages(chatId);
+        
         let existingUser = await this.database.getUserByTelegramId(chatId);
         
         let referralSource = existingUser?.referral_source || null;
@@ -272,25 +275,12 @@ export class TelegramBotService {
           });
         }
 
-        const welcomeMessage = `🎯 *Этот бот поможет тебе попасть в закрытый клуб Первый Панч*
-
-Мы объединяем людей, которым интересно развивать свой юмор и становиться увереннее. 
-
-Ниже находится всё необходимое 👇`;
-
-        const keyboard = [
-          [{ text: '💳 Оплатить доступ', callback_data: 'pay_access' }],
-          [{ text: '📖 Подробнее о канале', callback_data: 'about_channel' }],
-          [{ text: '💬 Обратная связь', url: 'https://t.me/johnyestet' }],
-          [{ text: '❓ FAQ', url: 'https://teletype.in/@tellmonster/JSyG1E5bs-b' }]
-        ];
-
-        await this.bot.sendMessage(chatId, welcomeMessage, {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: keyboard
-          }
-        });
+        // Формируем сообщение в зависимости от статуса пользователя
+        if (user.status === 'active') {
+          await this.sendActiveUserWelcome(chatId, user);
+        } else {
+          await this.sendInactiveUserWelcome(chatId, user);
+        }
         
         console.log(`✅ Приветственное сообщение отправлено пользователю ${chatId}`);
       } catch (error) {
@@ -302,6 +292,7 @@ export class TelegramBotService {
     // Команда /profile
     this.bot.onText(/\/profile/, async (msg) => {
       console.log(`📨 Получена команда /profile от пользователя ${msg.chat.id}`);
+      await this.clearPreviousMessages(msg.chat.id);
       await this.handleProfile(msg.chat.id);
     });
 
@@ -337,9 +328,11 @@ export class TelegramBotService {
 
         switch (data) {
           case 'pay_access':
+            await this.clearPreviousMessages(chatId);
             await this.handlePayAccess(chatId);
             break;
           case 'about_channel':
+            await this.clearPreviousMessages(chatId);
             await this.handleAboutChannel(chatId);
             break;
           case 'pay_card_rf':
@@ -358,7 +351,12 @@ export class TelegramBotService {
             await this.handleCancelSubscription(chatId);
             break;
           case 'profile':
+            await this.clearPreviousMessages(chatId);
             await this.handleProfile(chatId);
+            break;
+          case 'back_to_start':
+            await this.clearPreviousMessages(chatId);
+            await this.handleBackToStart(chatId);
             break;
           default:
             console.log(`⚠️ Неизвестный callback query: ${data}`);
@@ -528,6 +526,105 @@ export class TelegramBotService {
     console.log('✅ Управление каналом настроено');
   }
 
+  // Утилита для очистки предыдущих сообщений
+  async clearPreviousMessages(chatId) {
+    // В Telegram API нет прямого способа удалить все сообщения
+    // Эта функция служит как placeholder для будущей реализации
+    // или для логирования действий очистки
+    console.log(`🧹 Очистка предыдущих сообщений для пользователя ${chatId}`);
+  }
+
+  // Приветствие для активного пользователя
+  async sendActiveUserWelcome(chatId, user) {
+    let timeLeft = '';
+    
+    if (user.subscription_end) {
+      const endDate = new Date(user.subscription_end);
+      const now = new Date();
+      const timeDiff = endDate - now;
+      
+      if (timeDiff > 0) {
+        const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+        
+        if (days > 0) {
+          timeLeft = `⏰ *Подписка истекает через:* ${days}д ${hours}ч ${minutes}м`;
+        } else if (hours > 0) {
+          timeLeft = `⏰ *Подписка истекает через:* ${hours}ч ${minutes}м`;
+        } else {
+          timeLeft = `⏰ *Подписка истекает через:* ${minutes}м`;
+        }
+      } else {
+        timeLeft = '⚠️ *Подписка истекла*';
+      }
+    } else {
+      timeLeft = '♾️ *Подписка:* Бессрочная';
+    }
+
+    const welcomeMessage = `🔥 *Добро пожаловать в Первый Панч!*
+
+✅ *Статус:* Активен
+${timeLeft}
+
+🎯 Ты уже в игре! Время прокачивать свой юмор и зарабатывать на шутках.
+
+💎 *Что тебя ждет:*
+• Ежедневные уроки от профи
+• Конкурсы с призами до 100 000₽
+• Эксклюзивные материалы
+• Комьюнити единомышленников
+
+🚀 *Готов к новым победам?*`;
+
+    const keyboard = [
+      [{ text: '🔒 Перейти в канал', callback_data: 'go_to_channel' }],
+      [{ text: '👤 Мой профиль', callback_data: 'profile' }]
+    ];
+
+    await this.bot.sendMessage(chatId, welcomeMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    });
+  }
+
+  // Приветствие для неактивного пользователя
+  async sendInactiveUserWelcome(chatId, user) {
+    const welcomeMessage = `🎯 *Готов стать мастером юмора?*
+
+Добро пожаловать в *Первый Панч* — место, где обычные люди становятся звездами разговора!
+
+🔥 *Представь:*
+• Ты легко превращаешь любую неловкость в смех
+• Твои шутки запоминают и пересказывают
+• Ты уверенно чувствуешь себя в любой компании
+• Зарабатываешь до 100 000₽ за лучшие панчи
+
+💪 *Всего за 1000₽/месяц ты получишь:*
+✨ Ежедневные уроки от профи
+🎤 Прямые эфиры со Стасом Ерником
+🏆 Участие в конкурсах с крутыми призами
+💰 Шанс выиграть 100 000₽ за шутку
+👥 Комьюнити крутых ребят
+
+*Время становиться легендой!* 🚀`;
+
+    const keyboard = [
+      [{ text: '💳 Оплатить доступ', callback_data: 'pay_access' }],
+      [{ text: '📖 Подробнее о канале', callback_data: 'about_channel' }],
+      [{ text: '👤 Мой профиль', callback_data: 'profile' }]
+    ];
+
+    await this.bot.sendMessage(chatId, welcomeMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    });
+  }
+
   // Обработчики команд и callback'ов
 
   async handleProfile(chatId) {
@@ -550,7 +647,7 @@ export class TelegramBotService {
       if (user.status === 'active') {
         if (user.subscription_end) {
           const endDate = new Date(user.subscription_end);
-          const moscowTime = new Date(endDate.getTime() + 3 * 60 * 60 * 1000); // +3 часа для Москвы
+          const moscowTime = new Date(endDate.getTime() + 3 * 60 * 60 * 1000);
           const now = new Date();
           const timeLeft = endDate - now;
           
@@ -561,7 +658,14 @@ export class TelegramBotService {
             
             profileMessage += `✅ *Статус:* Активна\n`;
             profileMessage += `📅 *Действует до:* ${moscowTime.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}\n`;
-            profileMessage += `⏰ *Осталось:* ${days}д ${hours}ч ${minutes}м\n\n`;
+            
+            if (days > 0) {
+              profileMessage += `⏰ *Осталось:* ${days}д ${hours}ч ${minutes}м\n\n`;
+            } else if (hours > 0) {
+              profileMessage += `⏰ *Осталось:* ${hours}ч ${minutes}м\n\n`;
+            } else {
+              profileMessage += `⏰ *Осталось:* ${minutes}м\n\n`;
+            }
           } else {
             profileMessage += `❌ *Статус:* Истекла\n\n`;
           }
@@ -592,6 +696,9 @@ export class TelegramBotService {
         keyboard.push([{ text: '❌ Отменить подписку', callback_data: 'cancel_subscription' }]);
       }
 
+      // Добавляем кнопку "Назад"
+      keyboard.push([{ text: '🔙 Назад', callback_data: 'back_to_start' }]);
+
       await this.bot.sendMessage(chatId, profileMessage, {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -605,58 +712,66 @@ export class TelegramBotService {
   }
 
   async handleAboutChannel(chatId) {
-    const aboutMessage = `🎯 *Первый Панч - это тренажерный клуб по юмору*
+    const aboutMessage = `🎯 *Первый Панч — тренажерный клуб по юмору*
 
-Если ты хочешь научиться уверенно шутить и легко справляться с неловкими ситуациями - ты по адресу.
+🔥 *Хватит быть серым в разговоре!*
 
-Представь, что через пару недель ты легко превращаешь любые неловкие ситуации в шутку. Ты больше не думаешь: «А что сказать, чтобы было смешно?» - теперь ты это знаешь! Потому что начал думать по-новому.
+Представь: через пару недель ты легко превращаешь любые неловкие ситуации в шутку. Больше никаких мучительных пауз и мыслей «А что сказать, чтобы было смешно?» — теперь ты это знаешь!
 
-🎯 *Что внутри:*
-• Ежедневные короткие и полезные уроки по юмору, подаче, уверенности в разговоре
+💎 *Что внутри:*
+• Ежедневные короткие уроки по юмору и подаче
 • Прямые эфиры со Стасом Ерником
-• С первого дня доступ к тренажёрам по юмору, подборкам панчей и вебинарам
+• Тренажеры по юмору и подборки панчей
+• Вебинары и эксклюзивные материалы
 
-И всё это среди людей, которые на одной волне: смеются над твоими шутками и помогают становиться лучше. Здесь нормально учиться, пробовать, ошибаться и становиться смешнее каждый день.
+👥 *Комьюнити единомышленников* — люди, которые на одной волне: смеются над твоими шутками и помогают становиться лучше.
 
-🏆 *А также ежедневный конкурс шуток!* Лучшая забирает 1000 рублей. Просто за хороший панч. В конце месяца супер приз. Победитель получает 100 000 рублей!
+🏆 *Ежедневный конкурс шуток!*
+• Лучшая забирает 1000₽ просто за хороший панч
+• В конце месяца супер приз — 100 000₽!
 
-💰 *Всё это - всего за 1000 рублей в месяц.*
+💰 *Всё это за 1000₽/месяц*
 
-Да, за одну удачную шутку ты можешь отбить доступ прямо в первый день)
+Да, за одну удачную шутку ты можешь отбить доступ в первый же день! 😎
 
-Попадая в Первый Панч ты начинаешь понимать механику юмора, становишься увереннее, тебя больше слушают, ты легче заводишь новые знакомства. Это полезно и в работе, и в творчестве, и просто в жизни.
+🚀 *Результат:* Ты становишься увереннее, тебя больше слушают, легче заводишь знакомства. Полезно в работе, творчестве и жизни.
 
-*Ссылка на доступ* 👇`;
+*Готов стать мастером разговора?*`;
 
     await this.bot.sendMessage(chatId, aboutMessage, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '💳 Оплатить доступ', callback_data: 'pay_access' }]
+          [{ text: '💳 Оплатить доступ', callback_data: 'pay_access' }],
+          [{ text: '🔙 Назад', callback_data: 'back_to_start' }]
         ]
       }
     });
   }
 
   async handlePayAccess(chatId) {
-    const payMessage = `🚀 *Готов стать частью самого крутого клуба по юмору?*
+    const payMessage = `🚀 *Готов войти в элиту юмора?*
 
-🎯 *Первый Панч ждет тебя!* Всего за 1000 рублей в месяц ты получишь:
+🎯 *Первый Панч ждет тебя!*
 
+💎 *За 1000₽/месяц получаешь:*
 ✨ Ежедневные уроки от профи
 🎤 Прямые эфиры со Стасом Ерником  
-🏆 Шанс выиграть 100 000 рублей за лучшую шутку
+🏆 Шанс выиграть 100 000₽ за шутку
 💪 Тренажеры для прокачки юмора
-👥 Комьюнити единомышленников
+👥 Крутое комьюнити
 
-*Выбери удобный способ оплаты:*`;
+🔥 *Время становиться легендой!*
+
+*Выбери способ оплаты:*`;
 
     await this.bot.sendMessage(chatId, payMessage, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [{ text: '💳 Оплатить картой РФ', callback_data: 'pay_card_rf' }],
-          [{ text: '₿ Оплатить криптой', callback_data: 'pay_crypto' }]
+          [{ text: '₿ Оплатить криптой', callback_data: 'pay_crypto' }],
+          [{ text: '🔙 Назад', callback_data: 'back_to_start' }]
         ]
       }
     });
@@ -673,11 +788,18 @@ export class TelegramBotService {
         // Запрашиваем email
         this.awaitingEmail.set(chatId, 'payment');
         
-        await this.bot.sendMessage(chatId, `📧 *Для оформления подписки укажите вашу электронную почту*
+        await this.bot.sendMessage(chatId, `📧 *Для оформления подписки укажите email*
 
-Она нужна для отправки чека об оплате.
+Он нужен для отправки чека об оплате.
 
-*Введите ваш email:*`, { parse_mode: 'Markdown' });
+*Введите ваш email:*`, { 
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔙 Назад', callback_data: 'pay_access' }]
+            ]
+          }
+        });
       }
     } catch (error) {
       console.error('❌ Ошибка при обработке оплаты картой:', error);
@@ -695,7 +817,7 @@ export class TelegramBotService {
       const user = await this.database.getUserByTelegramId(chatId);
       
       const invoice = await this.cryptoCloudService.createInvoice(
-        1000, // Реальная сумма 1000 рублей
+        1000,
         'Подписка на Первый Панч',
         `tg_${chatId}_${Date.now()}`,
         'RUB'
@@ -710,7 +832,7 @@ export class TelegramBotService {
 
       await this.bot.sendMessage(chatId, `₿ *Оплата криптовалютой*
 
-💰 *Сумма:* 1000 ₽
+💰 *Сумма:* 1000₽
 🔗 *Платежная система:* CryptoCloud
 💎 *Поддерживаемые валюты:* BTC, ETH, USDT, USDC, LTC, BCH, BNB, TRX, DOGE
 
@@ -718,7 +840,8 @@ export class TelegramBotService {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
-            [{ text: '₿ Оплатить криптой', url: invoice.pay_url }]
+            [{ text: '₿ Оплатить криптой', url: invoice.pay_url }],
+            [{ text: '🔙 Назад', callback_data: 'pay_access' }]
           ]
         }
       });
@@ -750,7 +873,14 @@ export class TelegramBotService {
       if (action === 'payment') {
         await this.createYookassaPayment(chatId, email);
       } else if (action === 'change') {
-        await this.bot.sendMessage(chatId, `✅ *Email успешно обновлен на:* ${email}`, { parse_mode: 'Markdown' });
+        await this.bot.sendMessage(chatId, `✅ *Email успешно обновлен на:* ${email}`, { 
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔙 Назад', callback_data: 'back_to_start' }]
+            ]
+          }
+        });
       }
 
     } catch (error) {
@@ -764,11 +894,11 @@ export class TelegramBotService {
       const user = await this.database.getUserByTelegramId(chatId);
       
       const payment = await this.yookassaService.createPayment(
-        1000, // Реальная сумма 1000 рублей
+        1000,
         'Подписка на Первый Панч',
         null,
         true,
-        email // Передаем email для чека
+        email
       );
 
       await this.database.createPayment(
@@ -780,7 +910,7 @@ export class TelegramBotService {
 
       const confirmMessage = `💳 *Оплата подписки*
 
-💰 *Сумма:* 1000 ₽
+💰 *Сумма:* 1000₽
 📧 *Чек будет отправлен на:* ${email}
 🏦 *Платежная система:* ЮКасса
 
@@ -791,7 +921,8 @@ export class TelegramBotService {
         reply_markup: {
           inline_keyboard: [
             [{ text: '💳 Оплатить', url: payment.confirmation.confirmation_url }],
-            [{ text: '📄 Публичная оферта', url: 'https://docs.google.com/document/d/1TlGezk89A3CkHjmF2vgkG2TYP-KoCBPNZrgfNVG_gzk/edit?usp=sharing' }]
+            [{ text: '📄 Публичная оферта', url: 'https://docs.google.com/document/d/1TlGezk89A3CkHjmF2vgkG2TYP-KoCBPNZrgfNVG_gzk/edit?usp=sharing' }],
+            [{ text: '🔙 Назад', callback_data: 'pay_access' }]
           ]
         }
       });
@@ -810,11 +941,12 @@ export class TelegramBotService {
 
     await this.bot.sendMessage(chatId, `🔒 *Добро пожаловать в Первый Панч!*
 
-Переходите по ссылке ниже:`, {
+🎯 Переходи по ссылке и начинай прокачивать свой юмор:`, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🔗 Перейти в канал', url: this.PRIVATE_CHANNEL_LINK }]
+          [{ text: '🔗 Перейти в канал', url: this.PRIVATE_CHANNEL_LINK }],
+          [{ text: '🔙 Назад', callback_data: 'back_to_start' }]
         ]
       }
     });
@@ -825,7 +957,14 @@ export class TelegramBotService {
     
     await this.bot.sendMessage(chatId, `📧 *Введите новый email:*
 
-Новый email будет использоваться для отправки чеков об оплате.`, { parse_mode: 'Markdown' });
+Новый email будет использоваться для отправки чеков об оплате.`, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Назад', callback_data: 'profile' }]
+        ]
+      }
+    });
   }
 
   async handleCancelSubscription(chatId) {
@@ -850,11 +989,34 @@ export class TelegramBotService {
 
 ⚠️ После окончания подписки доступ к каналу будет отозван.
 
-📊 Проверить статус: /profile`, { parse_mode: 'Markdown' });
+📊 Проверить статус: /profile`, { 
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Назад', callback_data: 'back_to_start' }]
+          ]
+        }
+      });
       
     } catch (error) {
       console.error('❌ Ошибка при отмене автоплатежа:', error);
       await this.bot.sendMessage(chatId, '❌ Произошла ошибка при отмене автоплатежа.');
+    }
+  }
+
+  async handleBackToStart(chatId) {
+    // Получаем пользователя и отправляем соответствующее приветствие
+    try {
+      const user = await this.database.getUserByTelegramId(chatId);
+      
+      if (user.status === 'active') {
+        await this.sendActiveUserWelcome(chatId, user);
+      } else {
+        await this.sendInactiveUserWelcome(chatId, user);
+      }
+    } catch (error) {
+      console.error('❌ Ошибка при возврате к началу:', error);
+      await this.bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте /start');
     }
   }
 
@@ -921,14 +1083,13 @@ export class TelegramBotService {
         `🎉 *Добро пожаловать в Первый Панч!*
 
 ✅ Платеж успешно обработан
-💰 Сумма: ${payment.amount} ₽
+💰 Сумма: ${payment.amount}₽
 📅 Подписка активна до: ${endDateMoscow.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}
 🔄 Автоплатеж включен
 
-🔒 Теперь вы можете присоединиться к закрытому каналу!
+🔥 *Теперь ты в элите юмора!*
 
-Команды:
-/profile - Ваш профиль и управление подпиской`,
+🔒 Присоединяйся к закрытому каналу и начинай прокачиваться!`,
         {
           parse_mode: 'Markdown',
           reply_markup: {
