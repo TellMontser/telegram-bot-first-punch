@@ -335,11 +335,8 @@ export class TelegramBotService {
             await this.clearPreviousMessages(chatId);
             await this.handleAboutChannel(chatId);
             break;
-          case 'pay_sberpay':
-            await this.handlePayMethod(chatId, 'sberpay');
-            break;
-          case 'pay_sbp':
-            await this.handlePayMethod(chatId, 'sbp');
+          case 'pay_card_rf':
+            await this.handlePayCardRF(chatId);
             break;
           case 'pay_crypto':
             await this.handlePayCrypto(chatId);
@@ -370,38 +367,6 @@ export class TelegramBotService {
     });
     
     console.log('✅ Callback queries настроены');
-  }
-
-  async handlePayMethod(chatId, method) {
-    try {
-      const user = await this.database.getUserByTelegramId(chatId);
-      
-      if (user && user.email) {
-        // У пользователя уже есть email, сразу создаем платеж
-        await this.createYookassaPayment(chatId, user.email, method);
-      } else {
-        // Запрашиваем email
-        this.awaitingEmail.set(chatId, `payment_${method}`);
-        
-        const methodName = method === 'sberpay' ? 'СберПей' : 'СБП';
-        
-        await this.bot.sendMessage(chatId, `📧 *Для оплаты через ${methodName} укажите email*
-
-Он нужен для отправки чека об оплате.
-
-*Введите ваш email:*`, { 
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🔙 Назад', callback_data: 'pay_access' }]
-            ]
-          }
-        });
-      }
-    } catch (error) {
-      console.error(`❌ Ошибка при обработке оплаты ${method}:`, error);
-      await this.bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте позже.');
-    }
   }
 
   setupChannelManagement() {
@@ -815,8 +780,7 @@ ${timeLeft}
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🟢 СберПей', callback_data: 'pay_sberpay' }],
-          [{ text: '💳 СБП', callback_data: 'pay_sbp' }],
+          [{ text: '💳 Оплатить картой/СБП/СберПей', callback_data: 'pay_card_rf' }],
           [{ text: '₿ Оплатить криптой', callback_data: 'pay_crypto' }],
           [{ text: '🔙 Назад', callback_data: 'back_to_start' }]
         ]
@@ -830,12 +794,12 @@ ${timeLeft}
       
       if (user && user.email) {
         // У пользователя уже есть email, сразу создаем платеж
-        await this.createYookassaPayment(chatId, user.email, 'sberpay');
+        await this.createYookassaPayment(chatId, user.email);
       } else {
         // Запрашиваем email
         this.awaitingEmail.set(chatId, 'payment');
         
-        await this.bot.sendMessage(chatId, `📧 *Для оформления подписки укажите email*
+        await this.bot.sendMessage(chatId, `📧 *Для оплаты укажите email*
 
 Он нужен для отправки чека об оплате.
 
@@ -917,10 +881,8 @@ ${timeLeft}
       const action = this.awaitingEmail.get(chatId);
       this.awaitingEmail.delete(chatId);
 
-      if (action === 'payment' || action === 'payment_sberpay') {
-        await this.createYookassaPayment(chatId, email, 'sberpay');
-      } else if (action === 'payment_sbp') {
-        await this.createYookassaPayment(chatId, email, 'sbp');
+      if (action === 'payment') {
+        await this.createYookassaPayment(chatId, email);
       } else if (action === 'change') {
         await this.bot.sendMessage(chatId, `✅ *Email успешно обновлен на:* ${email}`, { 
           parse_mode: 'Markdown',
@@ -938,18 +900,16 @@ ${timeLeft}
     }
   }
 
-  async createYookassaPayment(chatId, email, preferredMethod = 'sberpay') {
+  async createYookassaPayment(chatId, email) {
     try {
       const user = await this.database.getUserByTelegramId(chatId);
       
-      // Создаем платеж с предпочтительным способом оплаты
       const payment = await this.yookassaService.createPayment(
         1000,
         'Подписка на Первый Панч',
         null,
         true,
-        email,
-        [preferredMethod] // Передаем предпочтительный способ
+        email
       );
 
       await this.database.createPayment(
@@ -963,7 +923,7 @@ ${timeLeft}
 
 💰 *Сумма:* 1000₽
 📧 *Чек будет отправлен на:* ${email}
-🏦 *Платежная система:* ${preferredMethod === 'sberpay' ? 'СберПей' : 'СБП'}
+🏦 *Платежная система:* ЮКасса (все способы оплаты)
 
 При оплате вы автоматически соглашаетесь с публичной офертой.`;
 
