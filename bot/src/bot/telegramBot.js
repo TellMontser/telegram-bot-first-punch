@@ -911,7 +911,7 @@ ${timeLeft}
         null,
         true,
         email,
-        ['sberpay', 'sbp'] // Ограничиваем способы оплаты
+        ['sberpay', 'sbp'] // Передаем как metadata для ограничения
       );
 
       await this.database.createPayment(
