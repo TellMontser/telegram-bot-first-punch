@@ -30,7 +30,7 @@ export class YookassaService {
     });
   }
 
-  async createPayment(amount, description, returnUrl = null, savePaymentMethod = false, customerEmail = null, paymentMethods = null) {
+  async createPayment(amount, description, returnUrl = null, savePaymentMethod = false, customerEmail = null, restrictedMethods = null) {
     const idempotencyKey = uuidv4();
     
     // Если returnUrl не указан, используем базовый URL сервера
@@ -41,6 +41,7 @@ export class YookassaService {
       description,
       savePaymentMethod,
       customerEmail,
+      restrictedMethods,
       idempotencyKey,
       returnUrl: finalReturnUrl
     });
@@ -59,20 +60,14 @@ export class YookassaService {
       }
     };
     
-    // Ограничиваем способы оплаты если указаны
-    if (paymentMethods && paymentMethods.length > 0) {
-      paymentData.payment_method_data = {
-        type: paymentMethods[0] // Используем первый доступный способ
+    // Ограничиваем способы оплаты через metadata (для фильтрации на стороне ЮКассы)
+    if (restrictedMethods && restrictedMethods.length > 0) {
+      paymentData.metadata = {
+        restricted_payment_methods: restrictedMethods.join(',')
       };
       
-      // Для СберПей и СБП добавляем специальные настройки
-      if (paymentMethods.includes('sberpay') || paymentMethods.includes('sbp')) {
-        paymentData.confirmation = {
-          type: 'redirect',
-          return_url: finalReturnUrl,
-          enforce: true
-        };
-      }
+      // Добавляем enforce для принудительного перенаправления
+      paymentData.confirmation.enforce = true;
     }
 
     // Добавляем чек только если указан email
