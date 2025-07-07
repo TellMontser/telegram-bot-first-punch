@@ -60,14 +60,25 @@ export class YookassaService {
       }
     };
     
-    // Ограничиваем способы оплаты через metadata (для фильтрации на стороне ЮКассы)
+    // Ограничиваем способы оплаты через payment_method_data
+    if (restrictedMethods && restrictedMethods.includes('sberpay')) {
+      // Для СберПей используем специальный тип
+      paymentData.payment_method_data = {
+        type: 'sberbank'
+      };
+    } else if (restrictedMethods && restrictedMethods.includes('sbp')) {
+      // Для СБП используем специальный тип
+      paymentData.payment_method_data = {
+        type: 'sbp'
+      };
+    }
+    
+    // Добавляем metadata для дополнительной информации
     if (restrictedMethods && restrictedMethods.length > 0) {
       paymentData.metadata = {
-        restricted_payment_methods: restrictedMethods.join(',')
+        allowed_payment_methods: restrictedMethods.join(','),
+        payment_source: 'telegram_bot'
       };
-      
-      // Добавляем enforce для принудительного перенаправления
-      paymentData.confirmation.enforce = true;
     }
 
     // Добавляем чек только если указан email
