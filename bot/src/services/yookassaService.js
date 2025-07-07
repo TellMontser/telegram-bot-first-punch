@@ -30,7 +30,7 @@ export class YookassaService {
     });
   }
 
-  async createPayment(amount, description, returnUrl = null, savePaymentMethod = false, customerEmail = null) {
+  async createPayment(amount, description, returnUrl = null, savePaymentMethod = false, customerEmail = null, paymentMethods = null) {
     const idempotencyKey = uuidv4();
     
     // Если returnUrl не указан, используем базовый URL сервера
@@ -58,6 +58,22 @@ export class YookassaService {
         return_url: finalReturnUrl
       }
     };
+    
+    // Ограничиваем способы оплаты если указаны
+    if (paymentMethods && paymentMethods.length > 0) {
+      paymentData.payment_method_data = {
+        type: paymentMethods[0] // Используем первый доступный способ
+      };
+      
+      // Для СберПей и СБП добавляем специальные настройки
+      if (paymentMethods.includes('sberpay') || paymentMethods.includes('sbp')) {
+        paymentData.confirmation = {
+          type: 'redirect',
+          return_url: finalReturnUrl,
+          enforce: true
+        };
+      }
+    }
 
     // Добавляем чек только если указан email
     if (customerEmail) {
