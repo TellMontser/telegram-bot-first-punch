@@ -53,6 +53,9 @@ export class YookassaService {
       description,
       save_payment_method: savePaymentMethod,
       capture: true, // Автоматическое подтверждение платежа
+      payment_method_data: {
+        type: 'sbp'
+      },
       confirmation: {
         type: 'redirect',
         return_url: finalReturnUrl
