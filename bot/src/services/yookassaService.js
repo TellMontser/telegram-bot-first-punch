@@ -53,11 +53,21 @@ export class YookassaService {
       description,
       save_payment_method: savePaymentMethod,
       capture: true, // Автоматическое подтверждение платежа
-      // Не указываем payment_method_data - пользователь выберет на странице ЮКассы
+      // Ограничиваем способы оплаты только картой и СБП
+      payment_method_data: {
+        type: 'bank_card'
+      },
       confirmation: {
         type: 'redirect',
-        return_url: finalReturnUrl
+        return_url: finalReturnUrl,
+        // Указываем разрешенные способы оплаты
+        enforce_3ds: false
       }
+    };
+    
+    // Добавляем ограничения на способы оплаты
+    paymentData.metadata = {
+      allowed_payment_methods: 'bank_card,sbp'
     };
 
     // Добавляем чек только если указан email
