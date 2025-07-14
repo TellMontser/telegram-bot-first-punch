@@ -341,12 +341,6 @@ export class TelegramBotService {
           case 'pay_card_rf':
             await this.handlePayCardRF(chatId);
             break;
-          case 'pay_sbp':
-            await this.handlePaySBP(chatId);
-            break;
-          case 'pay_card':
-            await this.handlePayCard(chatId);
-            break;
           case 'pay_crypto':
             await this.handlePayCrypto(chatId);
             break;
@@ -822,8 +816,8 @@ ${timeLeft}
       const user = await this.database.getUserByTelegramId(chatId);
       
       if (user && user.email) {
-        // У пользователя уже есть email, показываем выбор способа оплаты
-        await this.showPaymentMethodChoice(chatId, user.email);
+        // У пользователя уже есть email, создаем платеж сразу
+        await this.createYookassaPayment(chatId, user.email);
       } else {
         // Запрашиваем email
         this.awaitingEmail.set(chatId, 'payment');
@@ -847,48 +841,6 @@ ${timeLeft}
     }
   }
 
-  // Новый метод для выбора способа оплаты
-  async showPaymentMethodChoice(chatId, email) {
-    const choiceMessage = `💳 *Выберите способ оплаты*
-
-📧 *Чек будет отправлен на:* ${email}
-💰 *Сумма:* 1000₽
-
-*Доступные способы оплаты:*`;
-
-    await this.sendMessageWithTracking(chatId, choiceMessage, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🏦 Система быстрых платежей (СБП)', callback_data: 'pay_sbp' }],
-          [{ text: '💳 Банковской картой', callback_data: 'pay_card' }],
-          [{ text: '🔙 Назад', callback_data: 'pay_access' }]
-        ]
-      }
-    });
-  }
-
-  // Обработчик оплаты через СБП
-  async handlePaySBP(chatId) {
-    try {
-      const user = await this.database.getUserByTelegramId(chatId);
-      await this.createYookassaPayment(chatId, user.email, 'sbp');
-    } catch (error) {
-      console.error('❌ Ошибка при создании СБП платежа:', error);
-      await this.sendMessageWithTracking(chatId, '❌ Произошла ошибка при создании платежа. Попробуйте позже.');
-    }
-  }
-
-  // Обработчик оплаты картой
-  async handlePayCard(chatId) {
-    try {
-      const user = await this.database.getUserByTelegramId(chatId);
-      await this.createYookassaPayment(chatId, user.email, 'card');
-    } catch (error) {
-      console.error('❌ Ошибка при создании платежа картой:', error);
-      await this.sendMessageWithTracking(chatId, '❌ Произошла ошибка при создании платежа. Попробуйте позже.');
-    }
-  }
 
   async handlePayCrypto(chatId) {
     try {
@@ -955,7 +907,7 @@ ${timeLeft}
       this.awaitingEmail.delete(chatId);
 
       if (action === 'payment') {
-        await this.showPaymentMethodChoice(chatId, email);
+        await this.createYookassaPayment(chatId, email);
       } else if (action === 'change') {
         await this.sendMessageWithTracking(chatId, `✅ *Email успешно обновлен на:* ${email}`, { 
           parse_mode: 'Markdown',
@@ -973,24 +925,17 @@ ${timeLeft}
     }
   }
 
-  async createYookassaPayment(chatId, email, paymentMethod = 'sbp') {
+  async createYookassaPayment(chatId, email) {
     try {
       const user = await this.database.getUserByTelegramId(chatId);
       
-      // Определяем тип платежа
-      const paymentMethodData = paymentMethod === 'card' 
-        ? { type: 'bank_card' }
-        : { type: 'sbp' };
-      
-      const paymentMethodName = paymentMethod === 'card' ? 'Банковская карта' : 'СБП';
-      
+      // Не указываем конкретный способ оплаты - пользователь выберет на странице ЮКассы
       const payment = await this.yookassaService.createPayment(
         1000,
         'Подписка на Первый Панч',
         null,
         true,
-        email,
-        paymentMethodData
+        email
       );
 
       await this.database.createPayment(
@@ -1005,7 +950,7 @@ ${timeLeft}
 💰 *Сумма:* 1000₽
 📧 *Чек будет отправлен на:* ${email}
 🏦 *Платежная система:* ЮКасса
-💡 *Способ оплаты:* ${paymentMethodName}
+💡 *Способы оплаты:* СБП или банковская карта (выбор на странице оплаты)
 
 При оплате вы автоматически соглашаетесь с публичной офертой.`;
 
@@ -1021,7 +966,7 @@ ${timeLeft}
       });
       
     } catch (error) {
-      console.error('❌ Ошибка при создании ЮКасса платежа:', error);
+      console.error('❌ Ошибка при создании платежа:', error);
       await this.sendMessageWithTracking(chatId, '❌ Произошла ошибка при создании платежа. Попробуйте позже.');
     }
   }
