@@ -30,7 +30,7 @@ export class YookassaService {
     });
   }
 
-  async createPayment(amount, description, returnUrl = null, savePaymentMethod = false, customerEmail = null, paymentMethodData = null) {
+  async createPayment(amount, description, returnUrl = null, savePaymentMethod = false, customerEmail = null) {
     const idempotencyKey = uuidv4();
     
     // Если returnUrl не указан, используем базовый URL сервера
@@ -41,7 +41,6 @@ export class YookassaService {
       description,
       savePaymentMethod,
       customerEmail,
-      paymentMethodData,
       idempotencyKey,
       returnUrl: finalReturnUrl
     });
@@ -54,7 +53,7 @@ export class YookassaService {
       description,
       save_payment_method: savePaymentMethod,
       capture: true, // Автоматическое подтверждение платежа
-      payment_method_data: paymentMethodData || { type: 'sbp' },
+      // Не указываем payment_method_data - пользователь выберет на странице ЮКассы
       confirmation: {
         type: 'redirect',
         return_url: finalReturnUrl
