@@ -1065,6 +1065,100 @@ export function apiRoutes(database, telegramBot) {
     }
   });
 
+  // === API ДЛЯ ГЛОБАЛЬНЫХ НАСТРОЕК ПОДПИСКИ ===
+
+  // Получение глобальных настроек подписки
+  router.get('/subscription/settings', async (req, res) => {
+    try {
+      console.log('⚙️ API: Запрос глобальных настроек подписки');
+      
+      const { data, error } = await database.supabase
+        .from('subscription_settings')
+        .select('subscription_amount, currency')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        throw error;
+      }
+
+      // Если настроек нет, создаем дефолтные
+      if (!data) {
+        const { data: newSettings, error: createError } = await database.supabase
+          .from('subscription_settings')
+          .insert({
+            subscription_amount: 1000,
+            currency: 'RUB'
+          })
+          .select()
+          .single();
+
+        if (createError) throw createError;
+
+        console.log('✅ API: Созданы дефолтные настройки подписки');
+        return res.json({
+          defaultAmount: 1000,
+          defaultInterval: 'monthly'
+        });
+      }
+
+      console.log('✅ API: Глобальные настройки получены:', data);
+      res.json({
+        defaultAmount: data.subscription_amount,
+        defaultInterval: 'monthly' // Пока храним только в коде, можно добавить в БД
+      });
+    } catch (error) {
+      console.error('❌ API: Ошибка при получении глобальных настроек:', error);
+      res.status(500).json({ error: 'Ошибка сервера', details: error.message });
+    }
+  });
+
+  // Обновление глобальных настроек подписки
+  router.put('/subscription/settings', async (req, res) => {
+    try {
+      const { defaultAmount, defaultInterval } = req.body;
+      console.log(`💾 API: Обновление глобальных настроек: ${defaultAmount}₽, ${defaultInterval}`);
+      
+      // Валидация
+      if (!defaultAmount || defaultAmount <= 0) {
+        return res.status(400).json({ error: 'Некорректная сумма подписки' });
+      }
+
+      // Обновляем настройки в БД
+      const { error } = await database.supabase
+        .from('subscription_settings')
+        .upsert({
+          subscription_amount: defaultAmount,
+          currency: 'RUB',
+          updated_by: 'admin_panel'
+        });
+
+      if (error) throw error;
+
+      // Обновляем настройки у всех пользователей без кастомных настроек
+      const { error: updateUsersError } = await database.supabase
+        .from('users')
+        .update({
+          auto_payment_amount: defaultAmount,
+          auto_payment_interval: defaultInterval
+        })
+        .is('referral_link_id', null); // Только пользователи без реферальных ссылок
+
+      if (updateUsersError) {
+        console.warn('⚠️ Ошибка обновления пользователей:', updateUsersError);
+      } else {
+        console.log('✅ Настройки обновлены у пользователей без рефералок');
+      }
+
+      console.log('✅ API: Глобальные настройки обновлены');
+      res.json({ success: true, message: 'Настройки обновлены' });
+    } catch (error) {
+      console.error('❌ API: Ошибка при обновлении глобальных настроек:', error);
+      res.status(500).json({ error: 'Ошибка сервера', details: error.message });
+    }
+  });
+
   // Проверка подключения к базе данных
   router.get('/health/database', async (req, res) => {
     try {
