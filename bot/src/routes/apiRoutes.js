@@ -899,6 +899,114 @@ export function apiRoutes(database, telegramBot) {
     }
   });
 
+  // Проверка количества осиротевших рефералов
+  router.get('/referrals/check-orphaned', async (req, res) => {
+    try {
+      console.log('🔍 API: Проверка осиротевших рефералов');
+      
+      // Получаем всех пользователей с реферальной информацией
+      const { data: usersWithReferrals, error: usersError } = await database.supabase
+        .from('users')
+        .select('referral_link_id')
+        .not('referral_link_id', 'is', null);
+
+      if (usersError) throw usersError;
+
+      if (!usersWithReferrals || usersWithReferrals.length === 0) {
+        console.log('✅ API: Пользователей с рефералами не найдено');
+        return res.json(0);
+      }
+
+      // Получаем все существующие реферальные ссылки
+      const { data: existingLinks, error: linksError } = await database.supabase
+        .from('referral_links')
+        .select('id');
+
+      if (linksError) throw linksError;
+
+      const existingLinkIds = new Set((existingLinks || []).map(link => link.id));
+      
+      // Считаем осиротевших пользователей
+      const orphanedCount = usersWithReferrals.filter(user => 
+        !existingLinkIds.has(user.referral_link_id)
+      ).length;
+
+      console.log(`✅ API: Найдено ${orphanedCount} осиротевших рефералов`);
+      res.json(orphanedCount);
+    } catch (error) {
+      console.error('❌ API: Ошибка при проверке осиротевших рефералов:', error);
+      res.status(500).json({ error: 'Ошибка сервера', details: error.message });
+    }
+  });
+
+  // Очистка осиротевших рефералов
+  router.post('/referrals/cleanup-orphaned', async (req, res) => {
+    try {
+      console.log('🧹 API: Очистка осиротевших рефералов');
+      
+      // Получаем всех пользователей с реферальной информацией
+      const { data: usersWithReferrals, error: usersError } = await database.supabase
+        .from('users')
+        .select('id, telegram_id, referral_link_id, referral_source')
+        .not('referral_link_id', 'is', null);
+
+      if (usersError) throw usersError;
+
+      if (!usersWithReferrals || usersWithReferrals.length === 0) {
+        console.log('✅ API: Пользователей с рефералами не найдено');
+        return res.json({ cleaned: 0 });
+      }
+
+      // Получаем все существующие реферальные ссылки
+      const { data: existingLinks, error: linksError } = await database.supabase
+        .from('referral_links')
+        .select('id');
+
+      if (linksError) throw linksError;
+
+      const existingLinkIds = new Set((existingLinks || []).map(link => link.id));
+      
+      // Находим осиротевших пользователей
+      const orphanedUsers = usersWithReferrals.filter(user => 
+        !existingLinkIds.has(user.referral_link_id)
+      );
+
+      if (orphanedUsers.length === 0) {
+        console.log('✅ API: Осиротевших пользователей не найдено');
+        return res.json({ cleaned: 0 });
+      }
+
+      console.log(`🧹 API: Найдено ${orphanedUsers.length} осиротевших пользователей, очищаем...`);
+
+      // Очищаем реферальную информацию у осиротевших пользователей
+      const orphanedUserIds = orphanedUsers.map(user => user.id);
+      
+      const { error: clearError } = await database.supabase
+        .from('users')
+        .update({
+          referral_source: null,
+          referral_link_id: null
+        })
+        .in('id', orphanedUserIds);
+
+      if (clearError) {
+        console.error('❌ Ошибка очистки осиротевших пользователей:', clearError);
+        throw clearError;
+      }
+
+      // Логируем очищенных пользователей
+      for (const user of orphanedUsers) {
+        console.log(`✅ Очищен осиротевший реферал у пользователя ${user.telegram_id} (${user.referral_source})`);
+      }
+
+      console.log(`✅ API: Успешно очищено ${orphanedUsers.length} осиротевших рефералов`);
+      res.json({ cleaned: orphanedUsers.length });
+    } catch (error) {
+      console.error('❌ API: Ошибка при очистке осиротевших рефералов:', error);
+      res.status(500).json({ error: 'Ошибка сервера', details: error.message });
+    }
+  });
+
   // Проверка подключения к базе данных
   router.get('/health/database', async (req, res) => {
     try {
