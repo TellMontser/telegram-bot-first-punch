@@ -49,9 +49,12 @@ export class Database {
         return existingUser;
       }
       
-      // Получаем сумму подписки из реферальной ссылки, если она есть
-      let subscriptionAmount = 1000; // Базовая сумма по умолчанию
+      // Получаем сумму подписки из реферальной ссылки или глобальных настроек
+      let subscriptionAmount = 1000; // Fallback сумма
+      let subscriptionInterval = 'monthly'; // Fallback период
+      
       if (referralLinkId) {
+        // Если есть реферальная ссылка, используем её настройки
         try {
           const { data: referralLink, error } = await this.supabase
             .from('referral_links')
@@ -66,6 +69,23 @@ export class Database {
         } catch (referralError) {
           console.warn('⚠️ Ошибка получения суммы из реферальной ссылки:', referralError);
         }
+      } else {
+        // Если нет реферальной ссылки, используем глобальные настройки
+        try {
+          const { data: globalSettings, error } = await this.supabase
+            .from('subscription_settings')
+            .select('subscription_amount')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (!error && globalSettings) {
+            subscriptionAmount = globalSettings.subscription_amount;
+            console.log(`⚙️ Установлена сумма из глобальных настроек: ${subscriptionAmount} руб`);
+          }
+        } catch (settingsError) {
+          console.warn('⚠️ Ошибка получения глобальных настроек:', settingsError);
+        }
       }
       
       const { data, error } = await this.supabase
@@ -79,16 +99,18 @@ export class Database {
           referral_link_id: referralLinkId,
           status: 'inactive',
           auto_payment_enabled: false,
-          auto_payment_amount: subscriptionAmount // Устанавливаем сумму из реферальной ссылки или базовую
+          auto_payment_amount: subscriptionAmount,
+          auto_payment_interval: subscriptionInterval
         })
         .select()
         .single();
 
       if (error) throw error;
-      console.log(`✅ Создан новый пользователь ${telegramId} с реферальной информацией:`, {
+      console.log(`✅ Создан новый пользователь ${telegramId} с настройками:`, {
         referralSource,
         referralLinkId,
-        subscriptionAmount
+        subscriptionAmount,
+        subscriptionInterval
       });
       return data;
     } catch (error) {
