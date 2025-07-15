@@ -841,7 +841,83 @@ ${timeLeft}
     }
   }
 
+  // Проверка и управление участником канала
+  async checkAndManageChannelMember(channelId, userId) {
+    try {
+      console.log(`🔍 Проверяем участника ${userId} в канале ${channelId}`);
+      
+      const user = await this.database.getUserByTelegramId(userId);
+      
+      if (!user) {
+        console.log(`❌ Пользователь ${userId} не найден в базе данных`);
+        return;
+      }
 
+      // Проверяем статус пользователя
+      const isActive = user.status === 'active';
+      let subscriptionValid = true;
+      
+      if (user.subscription_end) {
+        const now = new Date();
+        const subscriptionEnd = new Date(user.subscription_end);
+        subscriptionValid = now <= subscriptionEnd;
+      }
+
+      const shouldHaveAccess = isActive && subscriptionValid;
+      
+      console.log(`👤 Пользователь ${userId}: статус=${user.status}, подписка_до=${user.subscription_end}, доступ=${shouldHaveAccess}`);
+
+      if (!shouldHaveAccess) {
+        try {
+          // Проверяем, является ли пользователь участником канала
+          const chatMember = await this.bot.getChatMember(channelId, userId);
+          
+          if (chatMember.status === 'member' || chatMember.status === 'restricted') {
+            console.log(`🚫 Кикаем пользователя ${userId} из канала (статус: ${chatMember.status})`);
+            
+            await this.bot.banChatMember(channelId, userId);
+            await this.bot.unbanChatMember(channelId, userId);
+            
+            console.log(`✅ Пользователь ${userId} кикнут из канала`);
+            
+            // Логируем действие
+            await this.database.logSubscriptionAction(
+              user.id,
+              'channel_kicked_auto',
+              `Пользователь автоматически кикнут из канала: неактивная подписка`
+            );
+
+            // Уведомляем пользователя
+            try {
+              await this.bot.sendMessage(userId, `
+🚫 Доступ к каналу отозван
+
+Ваша подписка неактивна или истекла.
+
+Для возобновления доступа:
+💳 Оформить подписку: /start
+📊 Проверить статус: /profile
+              `);
+            } catch (dmError) {
+              console.log(`⚠️ Не удалось отправить уведомление пользователю ${userId}:`, dmError.message);
+            }
+          } else {
+            console.log(`ℹ️ Пользователь ${userId} не является участником канала (статус: ${chatMember.status})`);
+          }
+        } catch (memberError) {
+          if (memberError.response && memberError.response.body && memberError.response.body.error_code === 400) {
+            console.log(`ℹ️ Пользователь ${userId} не найден в канале или уже не участник`);
+          } else {
+            console.error(`❌ Ошибка при проверке участника ${userId}:`, memberError);
+          }
+        }
+      } else {
+        console.log(`✅ Пользователь ${userId} имеет активную подписку, доступ сохранен`);
+      }
+    } catch (error) {
+      console.error(`❌ Ошибка при управлении участником ${userId}:`, error);
+    }
+  }
   async handlePayCrypto(chatId) {
     try {
       await this.clearPreviousMessages(chatId);
@@ -1219,6 +1295,111 @@ ${timeLeft}
       await this.handlePaymentSuccess(invoiceId);
     } catch (error) {
       console.error('❌ Ошибка при обработке успешного криптоплатежа:', error);
+    }
+  }
+
+  // Аудит всех участников канала
+  async performChannelAudit() {
+    if (!this.PRIVATE_CHANNEL_ID) {
+      console.log('⚠️ Аудит канала пропущен - канал не настроен');
+      return;
+    }
+
+    try {
+      console.log('🔍 Начинаем аудит закрытого канала...');
+      
+      // Получаем всех администраторов канала
+      const administrators = await this.bot.getChatAdministrators(this.PRIVATE_CHANNEL_ID);
+      const adminIds = administrators.map(admin => admin.user.id);
+      
+      console.log(`👑 Найдено ${adminIds.length} администраторов канала`);
+      
+      // Получаем количество участников канала
+      const chatMemberCount = await this.bot.getChatMemberCount(this.PRIVATE_CHANNEL_ID);
+      console.log(`👥 Всего участников в канале: ${chatMemberCount}`);
+      
+      // Получаем всех пользователей с активными подписками
+      const activeUsers = await this.database.getAllUsers();
+      const activeUserIds = activeUsers
+        .filter(user => {
+          const isActive = user.status === 'active';
+          let subscriptionValid = true;
+          
+          if (user.subscription_end) {
+            const now = new Date();
+            const subscriptionEnd = new Date(user.subscription_end);
+            subscriptionValid = now <= subscriptionEnd;
+          }
+          
+          return isActive && subscriptionValid;
+        })
+        .map(user => user.telegram_id);
+      
+      console.log(`✅ Найдено ${activeUserIds.length} пользователей с активными подписками`);
+      
+      // Проверяем каждого пользователя в базе данных
+      const allUsers = await this.database.getAllUsers();
+      let checkedCount = 0;
+      let kickedCount = 0;
+      
+      for (const user of allUsers) {
+        try {
+          // Пропускаем администраторов
+          if (adminIds.includes(user.telegram_id)) {
+            console.log(`👑 Пропускаем администратора ${user.telegram_id}`);
+            continue;
+          }
+          
+          const chatMember = await this.bot.getChatMember(this.PRIVATE_CHANNEL_ID, user.telegram_id);
+          
+          if (chatMember.status === 'member' || chatMember.status === 'restricted') {
+            checkedCount++;
+            
+            // Проверяем, должен ли пользователь иметь доступ
+            const isActive = user.status === 'active';
+            let subscriptionValid = true;
+            
+            if (user.subscription_end) {
+              const now = new Date();
+              const subscriptionEnd = new Date(user.subscription_end);
+              subscriptionValid = now <= subscriptionEnd;
+            }
+            
+            const shouldHaveAccess = isActive && subscriptionValid;
+            
+            if (!shouldHaveAccess) {
+              console.log(`🚫 Кикаем неактивного пользователя ${user.telegram_id} (статус: ${user.status})`);
+              
+              await this.bot.banChatMember(this.PRIVATE_CHANNEL_ID, user.telegram_id);
+              await this.bot.unbanChatMember(this.PRIVATE_CHANNEL_ID, user.telegram_id);
+              
+              kickedCount++;
+              
+              // Логируем действие
+              await this.database.logSubscriptionAction(
+                user.id,
+                'channel_audit_kick',
+                `Пользователь кикнут при аудите канала: неактивная подписка`
+              );
+              
+              // Небольшая задержка между киками
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+        } catch (memberError) {
+          if (memberError.response && memberError.response.body && memberError.response.body.error_code === 400) {
+            // Пользователь не в канале - это нормально
+            continue;
+          } else {
+            console.error(`❌ Ошибка при проверке пользователя ${user.telegram_id}:`, memberError.message);
+          }
+        }
+      }
+      
+      console.log(`✅ Аудит канала завершен: проверено ${checkedCount} участников, кикнуто ${kickedCount}`);
+      
+    } catch (error) {
+      console.error('❌ Ошибка при аудите канала:', error);
     }
   }
 
