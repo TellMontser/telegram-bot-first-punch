@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: telegram-bot-yookassa
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Все остальные переменные должны быть настроены в Environment вкладке Render
+      # BOT_TOKEN - добавить в Environment
+      # WEBHOOK_URL - добавить в Environment  
+      # YUKASSA_SHOP_ID - добавить в Environment
+      # YUKASSA_SECRET_KEY - добавить в Environment
+      # YUKASSA_API_URL - добавить в Environment
+      # CRYPTOCLOUD_API_KEY - добавить в Environment
+      # CRYPTOCLOUD_SHOP_ID - добавить в Environment
+      # CRYPTOCLOUD_SECRET - добавить в Environment
+      # PRIVATE_CHANNEL_ID - добавить в Environment
+      # PRIVATE_CHANNEL_LINK - добавить в Environment
+      # CHANNEL_ADMINS - добавить в Environment
+      # SUPABASE_URL - добавить в Environment
+      # SUPABASE_ANON_KEY - добавить в Environment
+      # SUPABASE_SERVICE_ROLE_KEY - добавить в Environment
+      # PORT - добавить в Environment (значение: 3000)
