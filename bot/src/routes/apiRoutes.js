@@ -786,6 +786,36 @@ export function apiRoutes(database, telegramBot) {
       const { id } = req.params;
       console.log(`🗑️ API: Удаление реферальной ссылки ${id}`);
       
+      // Сначала очищаем реферальную информацию у всех пользователей этой ссылки
+      const { error: clearUsersError } = await database.supabase
+        .from('users')
+        .update({
+          referral_source: null,
+          referral_link_id: null
+        })
+        .eq('referral_link_id', id);
+
+      if (clearUsersError) {
+        console.error('❌ Ошибка очистки пользователей реферальной ссылки:', clearUsersError);
+        // Продолжаем выполнение, но логируем ошибку
+      } else {
+        console.log(`✅ Очищена реферальная информация у пользователей ссылки ${id}`);
+      }
+
+      // Удаляем статистику реферальной ссылки
+      const { error: clearStatsError } = await database.supabase
+        .from('referral_stats')
+        .delete()
+        .eq('referral_link_id', id);
+
+      if (clearStatsError) {
+        console.error('❌ Ошибка удаления статистики реферальной ссылки:', clearStatsError);
+        // Продолжаем выполнение, но логируем ошибку
+      } else {
+        console.log(`✅ Удалена статистика реферальной ссылки ${id}`);
+      }
+
+      // Теперь удаляем саму реферальную ссылку
       const { error } = await database.supabase
         .from('referral_links')
         .delete()
@@ -793,7 +823,7 @@ export function apiRoutes(database, telegramBot) {
 
       if (error) throw error;
 
-      console.log('✅ API: Реферальная ссылка удалена');
+      console.log('✅ API: Реферальная ссылка и все связанные данные удалены');
       res.json({ success: true, message: 'Реферальная ссылка удалена' });
     } catch (error) {
       console.error('❌ API: Ошибка при удалении реферальной ссылки:', error);
