@@ -635,6 +635,39 @@ export class Database {
     }
   }
 
+  // Расчет времени окончания подписки в московском времени (дублируем для совместимости)
+  calculateSubscriptionEnd(interval = '2_minutes', customMinutes = null) {
+    const now = this.getMoscowTime();
+    
+    switch (interval) {
+      case '2_minutes':
+        return new Date(now.getTime() + 2 * 60 * 1000).toISOString();
+      case '3_minutes':
+        return new Date(now.getTime() + 3 * 60 * 1000).toISOString();
+      case 'hourly':
+        return new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+      case 'daily':
+        return new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+      case 'weekly':
+        return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      case 'monthly':
+        const monthEnd = new Date(now);
+        monthEnd.setMonth(monthEnd.getMonth() + 1);
+        return monthEnd.toISOString();
+      case 'custom':
+        if (customMinutes) {
+          return new Date(now.getTime() + customMinutes * 60 * 1000).toISOString();
+        }
+        // Если кастомный интервал не задан, используем месяц по умолчанию
+        const defaultEnd = new Date(now);
+        defaultEnd.setMonth(defaultEnd.getMonth() + 1);
+        return defaultEnd.toISOString();
+      default:
+        // По умолчанию - 2 минуты
+        return new Date(now.getTime() + 2 * 60 * 1000).toISOString();
+    }
+  }
+
   // === МЕТОДЫ ДЛЯ УПРАВЛЕНИЯ КАНАЛОМ ===
 
   // Создание запроса на вступление в канал (исправленная версия)
