@@ -58,7 +58,17 @@ export class PaymentScheduler {
     try {
       // Получаем актуальную сумму автоплатежа пользователя
       const paymentAmount = user.auto_payment_amount || 10;
-      console.log(`💳 Обработка автоплатежа для пользователя ${user.telegram_id}, сумма: ${paymentAmount} руб`);
+      
+      // Дополнительная проверка времени на стороне приложения
+      const now = new Date();
+      const shouldProcess = this.shouldProcessAutoPayment(user, now);
+      
+      if (!shouldProcess.ready) {
+        console.log(`⏰ Пользователь ${user.telegram_id} еще не готов к автоплатежу: ${shouldProcess.reason}`);
+        return;
+      }
+      
+      console.log(`💳 Обработка автоплатежа для пользователя ${user.telegram_id}, сумма: ${paymentAmount} руб, следующий платеж: ${shouldProcess.nextPaymentTime}`);
       
       if (!user.payment_method_id) {
         console.log(`⚠️ У пользователя ${user.telegram_id} нет payment_method_id, пропускаем автоплатеж`);
@@ -108,6 +118,14 @@ export class PaymentScheduler {
       );
 
       await this.database.updateLastPaymentDate(user.telegram_id);
+
+      // Очищаем next_payment_date после успешного платежа, чтобы дальше использовался расчет по интервалу
+      if (user.next_payment_date) {
+        await this.database.supabase
+          .from('users')
+          .update({ next_payment_date: null })
+          .eq('telegram_id', user.telegram_id);
+      }
 
       await this.database.logSubscriptionAction(
         user.id,
@@ -163,6 +181,78 @@ export class PaymentScheduler {
           console.error(`❌ Не удалось уведомить пользователя ${user.telegram_id} об ошибке автоплатежа:`, notifyError);
         }
       }
+    }
+  }
+
+  // Дополнительная проверка готовности к автоплатежу
+  shouldProcessAutoPayment(user, currentTime) {
+    // Если установлена точная дата следующего платежа
+    if (user.next_payment_date) {
+      const nextPaymentDate = new Date(user.next_payment_date);
+      if (currentTime >= nextPaymentDate) {
+        return {
+          ready: true,
+          reason: 'Достигнута установленная дата платежа',
+          nextPaymentTime: nextPaymentDate.toISOString()
+        };
+      } else {
+        return {
+          ready: false,
+          reason: `Ждем до ${nextPaymentDate.toLocaleString('ru-RU')}`,
+          nextPaymentTime: nextPaymentDate.toISOString()
+        };
+      }
+    }
+
+    // Рассчитываем на основе интервала
+    const baseTime = user.last_payment_date ? new Date(user.last_payment_date) : new Date(user.created_at);
+    const nextPaymentTime = this.calculateNextPaymentTime(baseTime, user.auto_payment_interval, user.custom_interval_minutes);
+    
+    if (currentTime >= nextPaymentTime) {
+      return {
+        ready: true,
+        reason: 'Прошел интервал с последнего платежа',
+        nextPaymentTime: nextPaymentTime.toISOString()
+      };
+    } else {
+      return {
+        ready: false,
+        reason: `Ждем до ${nextPaymentTime.toLocaleString('ru-RU')}`,
+        nextPaymentTime: nextPaymentTime.toISOString()
+      };
+    }
+  }
+
+  // Расчет времени следующего платежа
+  calculateNextPaymentTime(baseTime, interval, customMinutes = null) {
+    const base = new Date(baseTime);
+    
+    switch (interval) {
+      case '2_minutes':
+        return new Date(base.getTime() + 2 * 60 * 1000);
+      case '3_minutes':
+        return new Date(base.getTime() + 3 * 60 * 1000);
+      case 'hourly':
+        return new Date(base.getTime() + 60 * 60 * 1000);
+      case 'daily':
+        return new Date(base.getTime() + 24 * 60 * 60 * 1000);
+      case 'weekly':
+        return new Date(base.getTime() + 7 * 24 * 60 * 60 * 1000);
+      case 'monthly':
+        const monthNext = new Date(base);
+        monthNext.setMonth(monthNext.getMonth() + 1);
+        return monthNext;
+      case 'custom':
+        if (customMinutes) {
+          return new Date(base.getTime() + customMinutes * 60 * 1000);
+        }
+        // Если кастомный интервал не задан, используем месяц по умолчанию
+        const defaultNext = new Date(base);
+        defaultNext.setMonth(defaultNext.getMonth() + 1);
+        return defaultNext;
+      default:
+        // По умолчанию - 2 минуты
+        return new Date(base.getTime() + 2 * 60 * 1000);
     }
   }
 
