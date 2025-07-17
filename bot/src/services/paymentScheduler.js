@@ -374,30 +374,30 @@ export class PaymentScheduler {
     
     switch (interval) {
       case '2_minutes':
-        return new Date(now.getTime() + 2 * 60 * 1000).toISOString();
+        return new Date(now.getTime() + 2 * 60 * 1000);
       case '3_minutes':
-        return new Date(now.getTime() + 3 * 60 * 1000).toISOString();
+        return new Date(now.getTime() + 3 * 60 * 1000);
       case 'hourly':
-        return new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+        return new Date(now.getTime() + 60 * 60 * 1000);
       case 'daily':
-        return new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+        return new Date(now.getTime() + 24 * 60 * 60 * 1000);
       case 'weekly':
-        return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       case 'monthly':
         const monthEnd = new Date(now);
         monthEnd.setMonth(monthEnd.getMonth() + 1);
-        return monthEnd.toISOString();
+        return monthEnd;
       case 'custom':
         if (customMinutes) {
-          return new Date(now.getTime() + customMinutes * 60 * 1000).toISOString();
+          return new Date(now.getTime() + customMinutes * 60 * 1000);
         }
         // Если кастомный интервал не задан, используем месяц по умолчанию
         const defaultEnd = new Date(now);
         defaultEnd.setMonth(defaultEnd.getMonth() + 1);
-        return defaultEnd.toISOString();
+        return defaultEnd;
       default:
         // По умолчанию - 2 минуты
-        return new Date(now.getTime() + 2 * 60 * 1000).toISOString();
+        return new Date(now.getTime() + 2 * 60 * 1000);
     }
   }
 
